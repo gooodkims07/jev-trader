@@ -11,9 +11,9 @@ export function fmtInt(n: number | null | undefined): string {
   return INT.format(Math.round(safe(n)));
 }
 
-/** 0.0222354 -> "0.022235" (6 decimals, MON/USDC ticks) */
-export function fmtPrice(n: number | null | undefined): string {
-  return safe(n).toFixed(6);
+/** 0.0222354 -> "0.022235" (6 decimals, MON/USDC ticks). Pass the venue's decimals elsewhere. */
+export function fmtPrice(n: number | null | undefined, d = 6): string {
+  return safe(n).toFixed(d);
 }
 
 /** 0.0045 -> "$0.0045"; negatives -> "-$0.0045" */
@@ -90,6 +90,6 @@ export function shortTx(h: string | null | undefined): string {
   return h.length <= 6 ? h : `${h.slice(0, 6)}…`;
 }
 
-export function txUrl(h: string): string {
-  return `https://monadvision.com/tx/${h}`;
+export function txUrl(h: string, base = "https://monadvision.com/tx/"): string {
+  return `${base}${h}`;
 }

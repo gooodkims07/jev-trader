@@ -16,26 +16,13 @@
  */
 import { rpc } from "./chain";
 import { toFloat } from "./book";
+import { summarize, type MakerFill, type TradePrint, type TradeSource, type TradeSummary } from "./venue";
+
+export type { MakerFill, TradePrint, TradeSummary };
 
 export const TRADE_EVENT_SIG = "Trade(uint40,address,bool,uint256,uint96,address,address,uint96)";
 /** keccak256(TRADE_EVENT_SIG) — precomputed with ethers.utils.id. */
 export const TRADE_TOPIC0 = "0xf16924fba1c18c108912fcacaac7450c98eb3f2d8c0a3cdf3df7066c08f21581";
-
-export interface TradePrint { block: number; price: number; size: number; side: "buy" | "sell" }
-
-/** One of our resting orders got hit. `side` is OUR side (the maker's): a taker buy fills our ask, so side is "sell". */
-export interface MakerFill { block: number; txHash: string; orderId: number; price: number; size: number; updatedSize: number; side: "buy" | "sell" }
-
-export interface TradeSummary {
-  count: number;
-  buyMon: number;
-  sellMon: number;
-  /** taker buy volume minus taker sell volume (MON) */
-  cvdMon: number;
-  vwap: number | null;
-  lastPrice: number | null;
-  lastSide: "buy" | "sell" | null;
-}
 
 interface RawLog { blockNumber: string; logIndex: string; transactionHash: string; data: string; removed?: boolean }
 
@@ -48,7 +35,7 @@ const MAX_RANGE = 100;
 /** Never replay more than this many blocks in one poll (10 sequential getLogs calls at MAX_RANGE). */
 const MAX_CATCHUP = 1000;
 
-export class TradeFeed {
+export class TradeFeed implements TradeSource {
   private readonly market: string;
   private readonly url: string;
   private readonly priceDec: number;
@@ -123,25 +110,14 @@ export class TradeFeed {
     if (collectFills && this.maker && "0x" + data.slice(64 + 24, 128) === this.maker) {
       this.fills.push({
         block, txHash: log.transactionHash, orderId: Number(word(0)), price, size,
-        updatedSize: toFloat(word(4), this.sizeDec), side: isBuy ? "sell" : "buy",
+        updatedSize: toFloat(word(4), this.sizeDec), side: isBuy ? "sell" : "buy", fee: 0,
       });
     }
     return { block, price, size, side: isBuy ? "buy" : "sell" };
   }
 
   summary(lastBlocks: number, currentBlock: number): TradeSummary {
-    const minBlock = currentBlock - lastBlocks;
-    let count = 0, buyMon = 0, sellMon = 0, notional = 0;
-    let lastPrice: number | null = null, lastSide: "buy" | "sell" | null = null;
-    for (const t of this.trades) {
-      if (t.block <= minBlock) continue;
-      count++;
-      if (t.side === "buy") buyMon += t.size; else sellMon += t.size;
-      notional += t.size * t.price;
-      lastPrice = t.price; lastSide = t.side;
-    }
-    const vol = buyMon + sellMon;
-    return { count, buyMon, sellMon, cvdMon: buyMon - sellMon, vwap: vol > 0 ? notional / vol : null, lastPrice, lastSide };
+    return summarize(this.trades, lastBlocks, currentBlock);
   }
 
   /** Newest last. */

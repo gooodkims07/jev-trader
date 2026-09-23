@@ -1,8 +1,9 @@
 import { config } from "./config";
-import type { Fill, Quote } from "./market";
 import type { BlockEvent } from "./trader";
+import type { Fill, Quote, VenueInfo } from "./venue";
 
-interface Meta { model: string; wallet: string | null; dryRun: boolean; market: string; startedAt: number }
+/** `wallet` is the Kuru wallet address, or the Upbit account label. */
+interface Meta { model: string; wallet: string | null; dryRun: boolean; market: string; venue: VenueInfo; startedAt: number }
 
 const CORS = { "access-control-allow-origin": "*", "access-control-allow-headers": "*" };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...CORS, "content-type": "application/json" } });
@@ -37,7 +38,7 @@ export function startServer(meta: Meta, history: () => BlockEvent[]) {
   const broadcast = (type: string, data: unknown) => clients.forEach((c) => send(c, type, data));
   return {
     broadcast: (e: BlockEvent) => broadcast("block", e),
-    /** A quote's receipt landed: placed (with order id) or reverted, and the real gas. */
+    /** A quote was confirmed: placed (with order id) or reverted, and the real gas on Kuru. */
     broadcastQuote: (block: number, quote: Quote) => broadcast("quote", { block, quote }),
     /** A taker hit one of our resting orders in `block`. */
     broadcastFill: (block: number, fill: Fill) => broadcast("fill", { block, fill }),

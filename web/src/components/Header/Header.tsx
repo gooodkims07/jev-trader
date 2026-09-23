@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { BlockEvent, ConnectionState, Meta } from "@/lib/types";
 import { fmtInt, shortAddr } from "@/lib/format";
+import { useVenue } from "@/lib/venue";
 import styles from "./Header.module.css";
 
 export interface HeaderProps {
@@ -29,6 +30,9 @@ export default function Header({ meta, latest, connection }: HeaderProps) {
   );
 
   const wallet = meta?.wallet ?? null;
+  const venue = useVenue();
+  // Only a wallet address is worth copying; an exchange account label is shown as is.
+  const isAddress = !!wallet && wallet.startsWith("0x");
 
   const onCopy = useCallback(() => {
     if (!wallet) return;
@@ -50,7 +54,7 @@ export default function Header({ meta, latest, connection }: HeaderProps) {
     <div className={styles.header}>
       <span className={styles.brand}>‖ Jev Trader</span>
 
-      <span className={styles.block}>block {latest ? fmtInt(latest.block) : "-"}</span>
+      <span className={styles.block}>{venue.clock} {latest ? fmtInt(latest.block) : "-"}</span>
 
       <span className={styles.spacer} />
 
@@ -60,11 +64,11 @@ export default function Header({ meta, latest, connection }: HeaderProps) {
         type="button"
         className={styles.wallet}
         onClick={onCopy}
-        disabled={!wallet}
+        disabled={!isAddress}
         title={wallet ?? "no wallet, dry run"}
-        aria-label={wallet ? `Copy wallet address ${wallet}` : "Dry run"}
+        aria-label={isAddress ? `Copy wallet address ${wallet}` : wallet ?? "Dry run"}
       >
-        {copied ? "copied" : wallet ? shortAddr(wallet) : "dry run"}
+        {copied ? "copied" : wallet ? (isAddress ? shortAddr(wallet) : wallet) : "dry run"}
       </button>
 
       {model ? (

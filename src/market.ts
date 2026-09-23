@@ -3,54 +3,12 @@ import * as Kuru from "@kuru-labs/kuru-sdk";
 import OrderBookAbi from "@kuru-labs/kuru-sdk/abi/OrderBook.json";
 import MarginAccountAbi from "@kuru-labs/kuru-sdk/abi/MarginAccount.json";
 import { config } from "./config";
-import { rpc } from "./chain";
+import { rpc, startBlockFeed } from "./chain";
 import { readBook as fetchBook, readVaultParams, vaultActive, log10 } from "./book";
+import { TradeFeed } from "./trades";
+import type { Book, Fill, OrderId, Quote, QuoteResult, Side, Venue, VenueInfo } from "./venue";
 
-export interface Book {
-  block: number;
-  bid: number;
-  ask: number;
-  mid: number;
-  spreadBps: number;
-  /** (bidDepth - askDepth) / (bidDepth + askDepth) within 1% of mid. -1..1 */
-  imbalance: number;
-  /** Top 5 levels each side, best first: [price, size]. */
-  levels: { bids: [number, number][]; asks: [number, number][] };
-  /** Cumulative MON depth within N bps of mid, per side. */
-  depthBps: { [band: string]: { bid: number; ask: number } };
-}
-
-export type Side = "buy" | "sell";
-
-/**
- * This block's order: a post-only limit order resting on Kuru's book, replacing last block's.
- * `sent` until the receipt lands, then `placed` (with its orderId) or `reverted` (the book moved
- * through the price, or a cancelled id had already filled). `lost` if no receipt ever came.
- */
-export interface Quote {
-  side: Side;
-  price: number; // USDC per MON, tick aligned
-  size: number; // MON
-  txHash: string | null;
-  gasMon: number; // gasLimit x gas price: Monad charges the limit, not gasUsed
-  cancel: number[]; // resting order ids this tx cancels
-  status: "sent" | "placed" | "reverted" | "lost" | "sim";
-  orderId: number | null;
-  /** The position cap or margin funds picked this side; the model's probabilities still show its call. */
-  capped: boolean;
-}
-
-/** A maker fill: someone hit one of our resting orders. Arrives via the Trade log feed, not our own receipts. */
-export interface Fill {
-  side: Side;
-  size: number; // MON
-  price: number; // USDC per MON: our order's price
-  txHash: string | null; // the taker's transaction
-  orderId: number;
-  simulated: boolean;
-}
-
-export interface QuoteResult { block: number; quote: Quote; canceled: number[] }
+export type { Book, Fill, OrderId, Quote, QuoteResult, Side };
 
 const ERC20_ABI = [
   "function allowance(address,address) view returns (uint256)",
@@ -64,14 +22,19 @@ const ZERO_ADDRESS = ethers.constants.AddressZero;
 
 interface Pending { block: number; quote: Quote; gasLimit: ethers.BigNumber }
 
-/** Kuru MON-USDC market: read the book, post one limit order per block, confirm asynchronously. */
-export class Market {
+/** Kuru MON-USDC market on Monad: read the book, post one limit order per block, confirm asynchronously. */
+export class KuruVenue implements Venue {
+  readonly info: VenueInfo = {
+    name: "kuru", label: "Kuru", market: config.market, symbol: "MON-USDC", quoteCcy: "USDC",
+    priceDecimals: 6, clock: "block", txUrl: "https://monadvision.com/tx/",
+  };
+  readonly makerFeeRate = 0;
   readonly provider = new ethers.providers.StaticJsonRpcProvider(config.rpcUrl, config.chainId);
   /** null in a dry run (no key, or DRY_RUN=true): nothing is signed, nothing is sent. */
   readonly wallet = config.dryRun ? null : new ethers.Wallet(config.privateKey!, this.provider);
   params!: Kuru.MarketParams; // public so scripts can build txs without init()
   /** Margin account balances, refreshed every `config.refreshBlocks`. Limit orders draw from here. */
-  margin = { mon: 0, usdc: 0 };
+  readonly funds = { mon: 0, quote: 0 };
   private iface = new ethers.utils.Interface(OrderBookAbi.abi);
   private marginIface = new ethers.utils.Interface(MarginAccountAbi.abi);
   private nonce = 0;
@@ -80,18 +43,31 @@ export class Market {
   private useVault = false;
   private pending = new Map<string, Pending>();
 
+  private feed: TradeFeed | null = null;
+
   get address() { return this.wallet?.address ?? null; }
+  get account() { return this.address; }
+  get live() { return this.wallet !== null; }
+  get trades() {
+    if (!this.feed) throw new Error("KuruVenue.trades before init()");
+    return this.feed;
+  }
   private get priceDec() { return log10(this.params.pricePrecision); }
   private get sizeDec() { return log10(this.params.sizePrecision); }
   private get tickUnits() { return Number(this.params.tickSize.toString()); }
 
   async init() {
     this.params = await Kuru.ParamFetcher.getMarketParams(this.provider, config.market);
+    this.feed = new TradeFeed({ market: config.market, url: config.readRpcUrl, sizeDec: this.sizeDec, maker: this.address });
     await this.refresh();
     if (!this.wallet) return;
     await this.resyncNonce();
     await this.ensureMargin();
     await this.initGasLimit();
+  }
+
+  startClock(onBlock: (block: number) => void) {
+    startBlockFeed(onBlock);
   }
 
   /** Every `config.refreshBlocks`: fee estimate, margin balances, and whether the Kuru AMM vault went live. */
@@ -104,8 +80,8 @@ export class Market {
     ]);
     if (fee.status === "fulfilled") this.feeWei = BN.from(fee.value);
     if (vault.status === "fulfilled") this.useVault = vaultActive(vault.value);
-    if (mon.status === "fulfilled" && mon.value) this.margin.mon = Number(ethers.utils.formatUnits(mon.value, this.params.baseAssetDecimals.toNumber()));
-    if (usdc.status === "fulfilled" && usdc.value) this.margin.usdc = Number(ethers.utils.formatUnits(usdc.value, this.params.quoteAssetDecimals.toNumber()));
+    if (mon.status === "fulfilled" && mon.value) this.funds.mon = Number(ethers.utils.formatUnits(mon.value, this.params.baseAssetDecimals.toNumber()));
+    if (usdc.status === "fulfilled" && usdc.value) this.funds.quote = Number(ethers.utils.formatUnits(usdc.value, this.params.quoteAssetDecimals.toNumber()));
   }
 
   /** One eth_call (two batched into one HTTP request once the vault is live). */
@@ -132,11 +108,11 @@ export class Market {
    * Sign and fire one `batchUpdate`: cancel the given resting orders, post one new post-only limit
    * order. Returns as soon as the RPC has the hash. `pollPending` resolves placed/reverted later.
    */
-  async send(block: number, side: Side, sizeMon: number, book: Book, cancel: number[], capped: boolean): Promise<Quote> {
+  async send(block: number, side: Side, sizeMon: number, book: Book, cancel: OrderId[], capped: boolean): Promise<Quote> {
     const price = this.quotePrice(side, book);
-    if (!this.wallet) return { side, price, size: sizeMon, txHash: null, gasMon: 0, cancel, status: "sim", orderId: null, capped };
+    if (!this.wallet) return { side, price, size: sizeMon, txHash: null, ref: null, gasMon: 0, cancel, status: "sim", orderId: null, capped };
 
-    const tx = this.buildTx(side, sizeMon, price, cancel);
+    const tx = this.buildTx(side, sizeMon, price, cancel.map(Number));
     const signed = await this.wallet.signTransaction(tx);
     let hash: string;
     try {
@@ -146,7 +122,7 @@ export class Market {
       await this.resyncNonce().catch(() => {});
       throw e;
     }
-    const quote: Quote = { side, price, size: sizeMon, txHash: hash, gasMon: this.gasMon(this.gasLimit, this.feeWei), cancel, status: "sent", orderId: null, capped };
+    const quote: Quote = { side, price, size: sizeMon, txHash: hash, ref: hash, gasMon: this.gasMon(this.gasLimit, this.feeWei), cancel, status: "sent", orderId: null, capped };
     this.pending.set(hash, { block, quote, gasLimit: this.gasLimit });
     return quote;
   }
@@ -241,7 +217,7 @@ export class Market {
       }
     }
     await this.refresh();
-    console.log(`margin · ${this.margin.mon.toFixed(2)} MON · ${this.margin.usdc.toFixed(2)} USDC`);
+    console.log(`margin · ${this.funds.mon.toFixed(2)} MON · ${this.funds.quote.toFixed(2)} USDC`);
   }
 
   private async marginBalance(token: string): Promise<ethers.BigNumber> {
@@ -259,7 +235,7 @@ export class Market {
     else {
       try {
         const book = await this.readBook();
-        const side: Side = this.margin.usdc >= config.tradeSizeMon * book.ask ? "buy" : "sell";
+        const side: Side = this.funds.quote >= config.tradeSizeMon * book.ask ? "buy" : "sell";
         const data = this.encode(side, config.tradeSizeMon, this.quotePrice(side, book), []);
         const est = await this.provider.estimateGas({ to: config.market, from: this.wallet!.address, data });
         this.gasLimit = est.add(90_000).mul(115).div(100);

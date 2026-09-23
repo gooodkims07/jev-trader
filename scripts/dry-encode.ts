@@ -11,13 +11,13 @@ import OrderBookAbi from "@kuru-labs/kuru-sdk/abi/OrderBook.json";
 process.env.PRIVATE_KEY = ethers.Wallet.createRandom().privateKey;
 process.env.DRY_RUN = "false";
 const { config } = await import("../src/config");
-const { Market } = await import("../src/market");
+const { KuruVenue } = await import("../src/market");
 
 const RPC = process.argv[2] ?? config.readRpcUrl;
 const provider = new ethers.providers.StaticJsonRpcProvider(RPC, config.chainId);
 const iface = new ethers.utils.Interface(OrderBookAbi.abi);
 
-const market = new Market();
+const market = new KuruVenue();
 market.params = await Kuru.ParamFetcher.getMarketParams(provider, config.market);
 const book = await market.readBook();
 const size = config.tradeSizeMon;

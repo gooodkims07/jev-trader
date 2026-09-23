@@ -1,7 +1,14 @@
 const env = (key: string, fallback?: string) => process.env[key] ?? fallback;
 const num = (key: string) => (env(key) ? Number(env(key)) : undefined);
 
+const venue = env("VENUE", "kuru") as "kuru" | "upbit";
+const upbitAccessKey = env("UPBIT_ACCESS_KEY"), upbitSecretKey = env("UPBIT_SECRET_KEY");
+/** Live only with credentials for the chosen venue and DRY_RUN not "true". */
+const hasKeys = venue === "upbit" ? !!(upbitAccessKey && upbitSecretKey) : !!env("PRIVATE_KEY");
+
 export const config = {
+  /** Which exchange the bot trades on. kuru: Monad's on-chain book, one order per block. upbit: KRW market, one order per 300 ms tick. */
+  venue,
   rpcUrl: env("RPC_URL", "https://rpc.monad.xyz")!, // sends, receipts, nonce, gas estimation
   readRpcUrl: env("READ_RPC_URL", "https://rpc.monad.xyz")!, // book reads + eth_blockNumber polling + trade logs
   wsUrl: env("WS_URL"), // optional; polling backstop always runs
@@ -10,10 +17,19 @@ export const config = {
   /** Kuru MarginAccount this market settles against (slot 73 of the OrderBook proxy; verifiedMarket(market) is true). */
   marginAccount: env("MARGIN_ACCOUNT", "0x2A68ba1833cDf93fa9Da1EEbd7F46242aD8E90c5")!,
   privateKey: env("PRIVATE_KEY"),
-  dryRun: env("DRY_RUN") === "true" || !env("PRIVATE_KEY"),
+  dryRun: env("DRY_RUN") === "true" || !hasKeys,
+  upbit: {
+    accessKey: upbitAccessKey,
+    secretKey: upbitSecretKey,
+    market: env("UPBIT_MARKET", "KRW-MON")!, // KRW markets only: the tick table and the 5,000 KRW minimum are KRW rules
+    /** Charged on every fill, maker included. Used for simulated fills; live fills carry Upbit's own trade_fee. */
+    feeRate: Number(env("UPBIT_FEE_RATE", "0.0005")),
+    /** Length of one loop step. No chain, so a timer stands in for the block. */
+    tickMs: Number(env("UPBIT_TICK_MS", "300")),
+  },
   tradeSizeMon: Number(env("TRADE_SIZE_MON", "200")), // Kuru MON-USDC minimum order is 200 MON
   maxPositionMon: Number(env("MAX_POSITION_MON", "1000")),
-  bankrollUsd: Number(env("BANKROLL_USD", "100")), // used for pnlPct
+  bankrollUsd: Number(env("BANKROLL", env("BANKROLL_USD", "100"))), // used for pnlPct, in the venue's quote currency
   /** Quote this many ticks inside the touch (0 = join the best bid/ask). Never crosses: clamps to the touch when the spread is too tight. */
   quoteInsideTicks: Number(env("QUOTE_INSIDE_TICKS", "1")),
   /** Startup deposits into the Kuru margin account, topped up to these balances. Limit orders draw from margin, not the wallet. */

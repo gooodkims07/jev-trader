@@ -1,13 +1,14 @@
 import { experimental_evaluate } from "ai";
 import { typeSafeAi } from "@ai-sdk/typesafe-ai";
 import { config } from "./config";
+import type { VenueInfo } from "./venue";
 
 /** Models answer buy or sell. `hold` only appears on late blocks (no decision was made). */
 export type Action = "buy" | "sell" | "hold";
 
 /** What the model sees. Compact, relative, human-readable. */
 export interface TradeState {
-  market: "MON-USDC";
+  market: string; // "MON-USDC" on Kuru, "MON-KRW" on Upbit
   block: number;
   horizonBlocks: number; // the question is about the move over this many blocks
   blockMs: number;
@@ -39,12 +40,18 @@ export interface Model {
   decide(state: TradeState): Promise<Decision>;
 }
 
-const QUESTIONS = {
+/** Where the order goes, in the venue's own terms. Everything else in the question is shared. */
+const GOALS: Record<VenueInfo["name"], string> = {
+  kuru: "Make markets on MON-USDC on Kuru. Blocks are ~300 ms; `horizonBlocks` (~30 s) is the horizon. Every block one post-only limit order goes on the side you pick, just inside the touch, replacing the previous one. It never crosses, so we earn `spreadBps` rather than pay it. The cost is adverse selection: a taker fills us exactly when the market is about to run the other way. Pick the side whose inventory you want to be holding `horizonBlocks` from now.",
+  upbit: "Make markets on MON-KRW on Upbit. Each block here is a 300 ms tick; `horizonBlocks` (~30 s) is the horizon. Every tick one post-only limit order goes on the side you pick, just inside the touch, replacing the previous one. It never crosses, so we earn `spreadBps` rather than pay it, less a fee of about 5 bps per fill. Price steps are coarse, so the spread is often a single step. The cost is adverse selection: a taker fills us exactly when the market is about to run the other way. Pick the side whose inventory you want to be holding `horizonBlocks` from now.",
+};
+
+const questions = (venue: VenueInfo["name"]) => ({
   direction: {
     type: "choice",
     instructions: {
       question: "Will MON be higher or lower than the current mid after `horizonBlocks` more blocks?",
-      goal: "Make markets on MON-USDC on Kuru. Blocks are ~300 ms; `horizonBlocks` (~30 s) is the horizon. Every block one post-only limit order goes on the side you pick, just inside the touch, replacing the previous one. It never crosses, so we earn `spreadBps` rather than pay it. The cost is adverse selection: a taker fills us exactly when the market is about to run the other way. Pick the side whose inventory you want to be holding `horizonBlocks` from now.",
+      goal: GOALS[venue],
       timing: "The order rests on the book from the next block until it is replaced, cancelled or filled. It fills only when a taker crosses it: a bid is filled by a taker sell, an ask by a taker buy. Most blocks do not fill.",
       inputs: "Taker flow is the strongest signal: `trades.cvdMon` (taker buys minus taker sells over the horizon), `trades.lastSide` and `recentTrades` show who is hitting the book, and therefore who would hit us. `depth` and `book` show resting liquidity per side at several distances from mid; thin depth on one side means price moves easily that way. `returnsBps` and `recentMids` show the path over the horizon. A wide `spreadBps` means more edge per fill. If `allowed.buy` is false the order goes on the sell side regardless, and vice versa.",
     },
@@ -53,16 +60,21 @@ const QUESTIONS = {
       sell: "Post an ask: mid more likely to be lower after `horizonBlocks` blocks. A fill here leaves us short MON, sold above mid.",
     },
   },
-} as const;
+} as const);
 
 /** Real Jev via the AI SDK. Swap-in is the MODEL env var. */
 export class JevModel implements Model {
   readonly name = config.jevModelId;
   private model = typeSafeAi.evaluationModel(config.jevModelId);
+  private questions: ReturnType<typeof questions>;
+
+  constructor(venue: VenueInfo["name"]) {
+    this.questions = questions(venue);
+  }
 
   async decide(state: TradeState): Promise<Decision> {
     const t0 = performance.now();
-    const r = await experimental_evaluate({ model: this.model, state: state as any, questions: QUESTIONS, maxRetries: 0 });
+    const r = await experimental_evaluate({ model: this.model, state: state as any, questions: this.questions, maxRetries: 0 });
     const a = r.answers.direction;
     const p = a.probabilities ?? { buy: 0, sell: 0, [a.choice]: 1 };
     const buy = p.buy ?? 0, sell = p.sell ?? 0;
@@ -104,4 +116,4 @@ export class MockModel implements Model {
   }
 }
 
-export const createModel = (): Model => (config.model === "jev" ? new JevModel() : new MockModel());
+export const createModel = (venue: VenueInfo["name"]): Model => (config.model === "jev" ? new JevModel(venue) : new MockModel());

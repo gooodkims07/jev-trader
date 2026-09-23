@@ -10,6 +10,22 @@ One decision every Monad block. A TypeSafe Jev model watches the Kuru MON-USDC o
 
 With no `PRIVATE_KEY` it dry-runs: real book, real decisions, simulated fills. Set `MODEL=jev` and `TYPESAFE_AI_API_KEY` to use Jev; the default `mock` is a momentum heuristic stand-in.
 
+## Venues
+
+Kuru on Monad is the default and the demo. `VENUE=upbit` runs the same loop on Upbit's KRW market instead (`UPBIT_MARKET`, default `KRW-MON`). Everything exchange specific sits behind the `Venue` interface in `src/venue.ts`; the Trader, the model and the server only see that.
+
+| | Kuru (`VENUE=kuru`) | Upbit (`VENUE=upbit`) |
+|---|---|---|
+| Clock | Monad blocks (~300 ms) | a 300 ms timer (`UPBIT_TICK_MS`); `block` in events is the tick number |
+| Book, prints | `eth_call` getL2Book, `eth_getLogs` Trade | public WebSocket orderbook + trade, REST fallback |
+| Order | one `batchUpdate` tx: cancel + post-only place | `DELETE /v1/order` for what rests, then `POST /v1/orders` with `time_in_force: post_only` |
+| Our fills | Trade logs with us as maker | private WebSocket `myOrder`, plus the executed volume in every cancel response |
+| Cost | gas on the gas limit (`gasMon`) | fee on every fill, maker included (`UPBIT_FEE_RATE`, `feesUsd`) |
+| Money | USDC | KRW (every `...Usd` field is in the venue's quote currency) |
+| Live when | `PRIVATE_KEY` is set | `UPBIT_ACCESS_KEY` and `UPBIT_SECRET_KEY` are set |
+
+Upbit notes: API keys only work from the IP addresses registered with them, and need the asset, order and order inquiry permissions. `TRADE_SIZE_MON` must clear the 5,000 KRW minimum. KRW-MON moves in 0.1 KRW steps (~29 bps), so the spread is often one step and the order joins the touch. On startup a live run cancels open orders it left behind (identifier prefix `jev-`). The snapshot carries `venue` so the dashboard labels itself (pair, exchange, block or tick, price decimals).
+
 ## Endpoints
 
 Deployed (dry run, mock model): https://jev-trader-production.up.railway.app
@@ -50,7 +66,10 @@ Live sends are fired and forgotten, so the `block` event carries the **intent**:
     src/config.ts   env
     src/chain.ts    block feed (WebSocket newHeads + polling backstop, newest block only), raw RPC
     src/book.ts     one-eth_call order book reader (decodes getL2Book, merges the AMM vault)
-    src/market.ts   Kuru: read book, hand-encoded batchUpdate (cancel + post-only place), margin deposits, local nonce, async confirmation
+    src/venue.ts    Venue interface and the types shared by every exchange
+    src/market.ts   KuruVenue: read book, hand-encoded batchUpdate (cancel + post-only place), margin deposits, local nonce, async confirmation
+    src/upbit.ts    UpbitVenue: WebSocket book and prints, myOrder fills, cancel then post-only place
+    src/upbit-api.ts  Upbit REST with JWT (HS512) auth, KRW price unit table
     src/model.ts    Model interface, JevModel (AI SDK experimental_evaluate), MockModel
     src/trader.ts   the loop: one in flight, hold when late, position and P&L accounting
     src/server.ts   Bun.serve: snapshot, history, SSE

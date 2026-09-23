@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { BlockEvent } from "@/lib/types";
 import { fmtInt, fmtPrice, shortTx, txUrl } from "@/lib/format";
+import { useVenue } from "@/lib/venue";
 import styles from "./Feed.module.css";
 
 /** Must match `.row { height }` in Feed.module.css. */
@@ -39,6 +40,7 @@ const WORD: Record<Kind, string> = { buy: "BUY", sell: "SELL", late: "LATE" };
  * "rev" if the book moved through the price before it landed.
  */
 export default function Feed({ events }: { events: BlockEvent[] }) {
+  const venue = useVenue();
   const listRef = useRef<HTMLDivElement | null>(null);
   // How many whole 26px rows fit in the box the layout gives us. The list
   // itself clips, so a wrong guess is never a half-drawn row, only a hidden one.
@@ -92,10 +94,10 @@ export default function Feed({ events }: { events: BlockEvent[] }) {
             let detail = "";
             let detailMuted = false;
             if (fill && fill.size > 0) {
-              detail = `FILL ${fmtSize(fill.size)} @ ${fmtPrice(fill.price)}`;
+              detail = `FILL ${fmtSize(fill.size)} @ ${fmtPrice(fill.price, venue.priceDecimals)}`;
             } else if (decided && quote) {
               const word = quote.side === "buy" ? "bid" : "ask";
-              detail = `${word} ${fmtSize(quote.size)} @ ${fmtPrice(quote.price)}${quote.capped ? " cap" : ""}`;
+              detail = `${word} ${fmtSize(quote.size)} @ ${fmtPrice(quote.price, venue.priceDecimals)}${quote.capped ? " cap" : ""}`;
               detailMuted = quote.status === "reverted" || quote.status === "lost";
             } else if (decided) {
               detail = "no quote";
@@ -119,7 +121,7 @@ export default function Feed({ events }: { events: BlockEvent[] }) {
                 </span>
                 <span className={`${styles.cell} ${styles.tx}`}>
                   {fill && !fill.simulated && fill.txHash ? (
-                    <a href={txUrl(fill.txHash)} target="_blank" rel="noreferrer" title="the taker's transaction">
+                    <a href={txUrl(fill.txHash, venue.txUrl ?? undefined)} target="_blank" rel="noreferrer" title="the taker's transaction">
                       {shortTx(fill.txHash)}
                     </a>
                   ) : quote && quote.status === "sim" ? (
@@ -128,12 +130,17 @@ export default function Feed({ events }: { events: BlockEvent[] }) {
                     <a
                       className={quote.status === "sent" ? styles.pending : quote.status === "placed" ? undefined : styles.muted}
                       title={quote.status}
-                      href={txUrl(quote.txHash)}
+                      href={txUrl(quote.txHash, venue.txUrl ?? undefined)}
                       target="_blank"
                       rel="noreferrer"
                     >
                       {quote.status === "reverted" ? "rev" : quote.status === "lost" ? "lost" : shortTx(quote.txHash)}
                     </a>
+                  ) : quote ? (
+                    // No chain (Upbit): nothing to link, so show where the order stands.
+                    <span className={quote.status === "sent" ? styles.pending : quote.status === "placed" ? undefined : styles.muted} title={quote.status}>
+                      {quote.status === "placed" ? "live" : quote.status === "reverted" ? "rej" : quote.status}
+                    </span>
                   ) : null}
                 </span>
               </div>

@@ -2,6 +2,7 @@
 
 import type { BlockEvent } from "@/lib/types";
 import { fmtPct } from "@/lib/format";
+import { useVenue } from "@/lib/venue";
 import styles from "./DecisionPanel.module.css";
 
 export interface DecisionPanelProps {
@@ -48,6 +49,7 @@ function BarRow({ label, labelColor, active, value, fill, pct }: BarRowProps) {
 }
 
 export default function DecisionPanel({ latest }: DecisionPanelProps) {
+  const venue = useVenue();
   const decision = latest?.decision ?? null;
   const late = decision ? decision.late : true;
   // "hold" is treated as a non-decision, exactly as the feed does.
@@ -73,13 +75,13 @@ export default function DecisionPanel({ latest }: DecisionPanelProps) {
       <section className={styles.section}>
         <div className={styles.sectionLabel}>STANDING ORDER</div>
         <div className={styles.order}>
-          {"> post a bid or an ask on Kuru's MON/USDC book. every block. no abstaining."}
+          {`> post a bid or an ask on ${venue.label}'s ${venue.pair} book. every ${venue.clock}. no abstaining.`}
         </div>
       </section>
 
       <section className={styles.section}>
         <div className={`${styles.sectionLabel} ${styles.sectionLabelGap}`}>
-          WHICH SIDE THIS BLOCK?
+          WHICH SIDE THIS {venue.clock.toUpperCase()}?
         </div>
 
         <div className={styles.headline} style={{ color: headlineColor }}>

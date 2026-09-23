@@ -3,6 +3,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { BlockEvent } from "@/lib/types";
 import { fmtConf, fmtMon, fmtPrice, fmtSigned, fmtSignedMon } from "@/lib/format";
+import { useVenue } from "@/lib/venue";
 import { smoothPath } from "./smooth";
 import styles from "./FlowChart.module.css";
 
@@ -31,6 +32,7 @@ export default function FlowChart({
   events: BlockEvent[];
   latest: BlockEvent | null;
 }) {
+  const venue = useVenue();
   const panelRef = useRef<HTMLDivElement | null>(null);
   const originRef = useRef<number | null>(null);
   const scaleRef = useRef<{ lo: number; hi: number; block: number } | null>(null);
@@ -134,7 +136,7 @@ export default function FlowChart({
 
     const ticks = [0.25, 0.5, 0.75].map((f) => ({
       y: PAD_TOP + plotH * f,
-      label: fmtPrice(lo + (1 - f) * range),
+      label: fmtPrice(lo + (1 - f) * range, venue.midDecimals),
     }));
 
     const byBlock = new Map(series.map((e) => [e.block, e]));
@@ -155,7 +157,7 @@ export default function FlowChart({
       shift: w - ANCHOR_GAP - fx(last.block),
       endY: fy(last.mid),
     };
-  }, [events, latest, w, h]);
+  }, [events, latest, w, h, venue.midDecimals]);
 
   const hv = useMemo(() => {
     if (!model || hover === null) return null;
@@ -166,26 +168,26 @@ export default function FlowChart({
     const ty = Math.min(Math.max(model.fy(e.mid) - 92, PAD_TOP - 46), model.base - 82);
     const side = e.fill ? (e.fill.side === "buy" ? "BUY" : "SELL") : null;
     const q = e.quote;
-    const quoteText = q ? `${q.side === "buy" ? "bid" : "ask"} ${fmtPrice(q.price)}` : "no quote";
+    const quoteText = q ? `${q.side === "buy" ? "bid" : "ask"} ${fmtPrice(q.price, venue.priceDecimals)}` : "no quote";
     return {
       x,
       y: model.fy(e.mid),
       tx: flip ? x - 146 : x + 14,
       ty,
       block: `#${e.block}`,
-      price: fmtPrice(e.mid),
+      price: fmtPrice(e.mid, venue.midDecimals),
       trade: side ? `FILL ${side} ${fmtMon(e.fill!.size, 0)}` : quoteText,
       tint: e.fill ? (e.fill.side === "buy" ? "var(--buy-ink)" : "var(--sell-ink)") : q ? (q.side === "buy" ? "var(--buy-ink)" : "var(--sell-ink)") : "var(--muted)",
       lat: e.decision && !e.decision.late ? `${Math.round(e.decision.latencyMs)} ms` : "late",
     };
-  }, [model, hover, w]);
+  }, [model, hover, w, venue]);
 
   const shown = latest ?? events[events.length - 1] ?? null;
   const d = shown?.decision ?? null;
   const late = d?.late === true;
   const act = late ? "late" : (d?.action ?? "hold");
   const word =
-    act === "buy" ? "Buying" : act === "sell" ? "Selling" : act === "late" ? "Missed the block" : "Holding";
+    act === "buy" ? "Buying" : act === "sell" ? "Selling" : act === "late" ? `Missed the ${venue.clock}` : "Holding";
   const wordColor =
     act === "buy"
       ? "var(--buy-ink)"
@@ -319,7 +321,7 @@ export default function FlowChart({
                 <circle cx={w - ANCHOR_GAP} cy="0" r="4" fill="var(--ink)" />
                 <rect x={w - TAG_W - 4} y="-10" width={TAG_W} height="20" rx="999" fill="var(--ink)" />
                 <text className={styles.tagText} x={w - 4 - TAG_W / 2} y="4" textAnchor="middle">
-                  {fmtPrice(model.last.mid)}
+                  {fmtPrice(model.last.mid, venue.midDecimals)}
                 </text>
               </g>
             </svg>
@@ -328,11 +330,11 @@ export default function FlowChart({
 
             <div className={styles.tl}>
               <div className={styles.price} key={shown.mid}>
-                {fmtPrice(shown.mid)}
+                {fmtPrice(shown.mid, venue.midDecimals)}
               </div>
               <div className={styles.sub}>
-                <span>MON/USDC</span>
-                <span>Kuru</span>
+                <span>{venue.pair}</span>
+                <span>{venue.label}</span>
                 <span>{stance}</span>
                 <span style={{ color: pnlMon >= 0 ? "var(--pnl-pos)" : "var(--pnl-neg)" }}>
                   p&amp;l {fmtSignedMon(pnlMon, 3)} ({fmtSigned(pnlPct, 2)}%)

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useReducer } from "react";
-import type { BlockEvent, ConnectionState, FeedState, Fill, Meta, Quote } from "./types";
+import type { BlockEvent, ConnectionState, FeedState, Fill, Meta, Quote, VenueInfo } from "./types";
 
 export { useUptime } from "./useUptime";
 
@@ -183,6 +183,25 @@ function parseMeta(raw: Record<string, unknown> | null): Meta | null {
     dryRun: Boolean(raw.dryRun),
     market: typeof raw.market === "string" ? raw.market : "MON/USDC",
     startedAt: typeof raw.startedAt === "number" ? raw.startedAt : Date.now(),
+    venue: parseVenue(raw.venue),
+  };
+}
+
+/** Absent on servers from before venues existed: those are Kuru, and `venueOf` falls back to it. */
+function parseVenue(raw: unknown): VenueInfo | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const v = raw as Record<string, unknown>;
+  if (v.name !== "kuru" && v.name !== "upbit") return undefined;
+  const str = (x: unknown, d: string) => (typeof x === "string" ? x : d);
+  return {
+    name: v.name,
+    label: str(v.label, v.name),
+    market: str(v.market, ""),
+    symbol: str(v.symbol, "MON-USDC"),
+    quoteCcy: str(v.quoteCcy, "USDC"),
+    priceDecimals: typeof v.priceDecimals === "number" ? v.priceDecimals : 6,
+    clock: v.clock === "tick" ? "tick" : "block",
+    txUrl: typeof v.txUrl === "string" ? v.txUrl : null,
   };
 }
 

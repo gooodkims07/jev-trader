@@ -6,6 +6,7 @@ import FlowChart from "@/components/FlowChart/FlowChart";
 import Header from "@/components/Header/Header";
 import StatsRow from "@/components/StatsRow/StatsRow";
 import { useFeed } from "@/lib/useFeed";
+import { VenueProvider } from "@/lib/venue";
 import styles from "./page.module.css";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "https://jev-trader-production.up.railway.app";
@@ -14,6 +15,7 @@ export default function Page() {
   const feed = useFeed(API_URL);
 
   return (
+    <VenueProvider meta={feed.meta}>
     <div className="card">
       <Header meta={feed.meta} latest={feed.latest} connection={feed.connection} />
       <StatsRow latest={feed.latest} avgLatencyMs={feed.avgLatencyMs} meta={feed.meta} />
@@ -29,5 +31,6 @@ export default function Page() {
         </div>
       </div>
     </div>
+    </VenueProvider>
   );
 }
