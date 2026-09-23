@@ -1,15 +1,16 @@
 /**
  * The exchange boundary. The Trader, the model and the server only talk to a `Venue`; everything
- * specific to one exchange (Kuru on Monad, Upbit) lives behind it.
+ * specific to one exchange (Kuru spot on Monad, OKX perpetual swaps) lives behind it.
  *
- * Time is counted in "blocks": Monad blocks on Kuru, 300 ms clock ticks on Upbit. Money fields named
- * `...Usd` elsewhere are in the venue's quote currency (`quoteCcy`: USDC on Kuru, KRW on Upbit), and
- * size fields named `...Mon` are in the base asset (`base`: MON on Kuru, whatever UPBIT_MARKET trades).
+ * Time is counted in "blocks": Monad blocks on Kuru, 300 ms clock ticks on OKX. Money fields named
+ * `...Usd` elsewhere are in the venue's quote currency (`quoteCcy`: USDC on Kuru, USDT on OKX), and
+ * size fields named `...Mon` are in the base asset (`base`: MON on Kuru, the swap's underlying on OKX;
+ * OKX contracts are converted to it).
  */
 
 export type Side = "buy" | "sell";
 
-/** Kuru order ids are numbers; Upbit order ids are uuids. Negative numbers are simulated orders. */
+/** Kuru order ids are numbers; OKX order ids are strings. Negative numbers are simulated orders. */
 export type OrderId = number | string;
 
 export interface Book {
@@ -35,11 +36,11 @@ export interface Quote {
   side: Side;
   price: number; // quote currency per base unit, tick aligned
   size: number; // base asset
-  /** Kuru: the transaction. Upbit: always null (no chain). */
+  /** Kuru: the transaction. OKX: always null (no chain). */
   txHash: string | null;
-  /** The venue's handle for this send until it resolves: tx hash on Kuru, client order identifier on Upbit. */
+  /** The venue's handle for this send until it resolves: tx hash on Kuru, client order id on OKX. */
   ref: string | null;
-  gasMon: number; // Kuru: gasLimit x gas price (Monad charges the limit). Upbit: 0
+  gasMon: number; // Kuru: gasLimit x gas price (Monad charges the limit). OKX: 0
   cancel: OrderId[]; // resting order ids this send cancels
   status: "sent" | "placed" | "reverted" | "lost" | "sim";
   orderId: OrderId | null;
@@ -93,12 +94,12 @@ export interface TradeSource {
 
 /** What the dashboard needs to label a venue. */
 export interface VenueInfo {
-  name: "kuru" | "upbit";
+  name: "kuru" | "okx";
   /** Exchange name as shown. */
   label: string;
-  /** Kuru: the OrderBook contract. Upbit: the market code, e.g. KRW-MON. */
+  /** Kuru: the OrderBook contract. OKX: the instrument id, e.g. MON-USDT-SWAP. */
   market: string;
-  /** "MON-USDC", "MON-KRW": base first. */
+  /** "MON-USDC", "MON-USDT": base first. */
   symbol: string;
   /** The asset traded: "MON", "BTC". Sizes are in this. */
   base: string;
@@ -115,12 +116,15 @@ export interface VenueInfo {
 
 export interface Venue {
   readonly info: VenueInfo;
-  /** Wallet address (Kuru) or account label (Upbit); null in a dry run. */
+  /** Wallet address (Kuru) or account label (OKX); null in a dry run. */
   readonly account: string | null;
   /** True when orders are signed and sent for real. */
   readonly live: boolean;
-  /** Funds orders draw from, net of what is resting: Kuru margin account, Upbit available balance. */
-  readonly funds: { mon: number; quote: number };
+  /**
+   * Live only: would one more order of `size` on `side` fit the funds it draws on? Kuru spot needs quote
+   * for a bid and MON for an ask; a perpetual needs margin either way. Balances refresh in `refresh()`.
+   */
+  canAfford(side: Side, size: number, book: Book): boolean;
   /** Fee rate charged on a maker fill, for simulated fills. */
   readonly makerFeeRate: number;
   readonly trades: TradeSource;
@@ -137,6 +141,8 @@ export interface Venue {
   send(block: number, side: Side, sizeMon: number, book: Book, cancel: OrderId[], capped: boolean): Promise<Quote>;
   /** Sends that resolved (or timed out) since the last call. */
   pollPending(block: number): Promise<QuoteResult[]>;
+  /** On SIGINT/SIGTERM: take our orders off the book. Optional; Kuru leaves the last order resting as before. */
+  shutdown?(): Promise<void>;
 }
 
 /** Summary of taker flow over the last `lastBlocks` blocks. Shared by every TradeSource. */
@@ -153,4 +159,23 @@ export function summarize(trades: TradePrint[], lastBlocks: number, currentBlock
   }
   const vol = buyMon + sellMon;
   return { count, buyMon, sellMon, cvdMon: buyMon - sellMon, vwap: vol > 0 ? notional / vol : null, lastPrice, lastSide };
+}
+
+/** Book from levels sorted best first, with the same depth and imbalance rules as the Kuru book. For venues whose book arrives as plain levels. */
+export function bookFromLevels(block: number, bids: [number, number][], asks: [number, number][]): Book {
+  if (!bids.length || !asks.length) throw new Error(`empty book side at block ${block} (bids=${bids.length} asks=${asks.length})`);
+  const bid = bids[0]![0], ask = asks[0]![0];
+  const mid = (bid + ask) / 2;
+  const near = (levels: [number, number][]) => levels.filter((l) => Math.abs(l[0] - mid) / mid < 0.01).reduce((s, l) => s + l[1], 0);
+  const within = (levels: [number, number][], bps: number) => levels.filter((l) => (Math.abs(l[0] - mid) / mid) * 10_000 <= bps).reduce((s, l) => s + l[1], 0);
+  const bidDepth = near(bids), askDepth = near(asks);
+  const depthBps: Book["depthBps"] = {};
+  for (const b of [10, 25, 50]) depthBps[String(b)] = { bid: within(bids, b), ask: within(asks, b) };
+  return {
+    block, bid, ask, mid,
+    spreadBps: ((ask - bid) / mid) * 10_000,
+    imbalance: bidDepth + askDepth ? (bidDepth - askDepth) / (bidDepth + askDepth) : 0,
+    levels: { bids: bids.slice(0, 5), asks: asks.slice(0, 5) },
+    depthBps,
+  };
 }

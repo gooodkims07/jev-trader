@@ -2,7 +2,7 @@ import { config } from "./config";
 import type { BlockEvent } from "./trader";
 import type { Fill, Quote, VenueInfo } from "./venue";
 
-/** `wallet` is the Kuru wallet address, or the Upbit account label. */
+/** `wallet` is the Kuru wallet address, or the OKX account label. */
 interface Meta { model: string; wallet: string | null; dryRun: boolean; market: string; venue: VenueInfo; startedAt: number }
 
 const CORS = { "access-control-allow-origin": "*", "access-control-allow-headers": "*" };

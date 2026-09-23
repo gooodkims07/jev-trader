@@ -191,7 +191,7 @@ function parseMeta(raw: Record<string, unknown> | null): Meta | null {
 function parseVenue(raw: unknown): VenueInfo | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const v = raw as Record<string, unknown>;
-  if (v.name !== "kuru" && v.name !== "upbit") return undefined;
+  if (v.name !== "kuru" && v.name !== "okx") return undefined;
   const str = (x: unknown, d: string) => (typeof x === "string" ? x : d);
   return {
     name: v.name,

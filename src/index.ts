@@ -4,12 +4,12 @@ import { Trader } from "./trader";
 import { startServer } from "./server";
 import type { Venue } from "./venue";
 
-const venue: Venue = config.venue === "upbit" ? new (await import("./upbit")).UpbitVenue() : new (await import("./market")).KuruVenue();
+const venue: Venue = config.venue === "okx" ? new (await import("./okx")).OkxVenue() : new (await import("./market")).KuruVenue();
 await venue.init();
 const model = createModel(venue.info);
 const { info } = venue;
 const px = (p: number) => p.toFixed(info.priceDecimals);
-// Off Kuru a mid can sit half a price unit off the grid (2136.5 on a 1 KRW book): one more decimal, shown only when not zero.
+// Off Kuru a mid can sit half a price unit off the grid (0.024425 on a 0.00001 book): one more decimal, shown only when not zero.
 const pxMid = (p: number) => (info.name === "kuru" ? px(p) : p.toFixed(info.priceDecimals + 1).replace(/0$/, "").replace(/\.$/, ""));
 
 const server = startServer(
@@ -38,6 +38,17 @@ const trader = new Trader(
   },
 );
 
-const where = info.name === "kuru" ? `market ${info.market} · read ${config.readRpcUrl}` : `market ${info.market} · ${config.upbit.tickMs} ms ticks`;
+const where = info.name === "kuru" ? `market ${info.market} · read ${config.readRpcUrl}` : `market ${info.market} · ${config.okx.tickMs} ms ticks${venue.live && config.okx.demo ? " · OKX demo trading" : ""}`;
 console.log(`jev-trader · ${info.label} · model=${model.name} · post-only ${config.quoteInsideTicks} tick inside the touch · horizon ${config.horizonBlocks} ${info.clock}s · ${venue.live ? `account ${venue.account}` : "DRY RUN"} · ${where} · :${config.port}`);
 venue.startClock((block) => trader.onBlock(block));
+
+// Take our orders off the book on the way out (OKX). A second signal exits at once.
+let stopping = false;
+for (const sig of ["SIGINT", "SIGTERM"] as const)
+  process.on(sig, async () => {
+    if (stopping || !venue.shutdown || !venue.live) process.exit(0);
+    stopping = true;
+    console.log(`${sig}: cancelling open orders`);
+    await venue.shutdown().catch((e) => console.warn(`shutdown: ${(e as Error).message}`));
+    process.exit(0);
+  });

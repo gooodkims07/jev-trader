@@ -25,8 +25,8 @@ export interface VenueView extends VenueInfo {
 }
 
 /**
- * Kuru mids print as they always have. Elsewhere a mid can sit half a price unit off the grid (34.95 on a
- * 0.1 KRW book, 2136.5 on a 1 KRW book), so it gets one more decimal, shown only when it is not zero.
+ * Kuru mids print as they always have. Elsewhere a mid can sit half a price unit off the grid (0.024425 on
+ * MON-USDT-SWAP's 0.00001 book), so it gets one more decimal, shown only when it is not zero.
  */
 export function fmtMid(n: number, v: VenueInfo): string {
   const x = Number.isFinite(n) ? n : 0;

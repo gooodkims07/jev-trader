@@ -1,13 +1,13 @@
 const env = (key: string, fallback?: string) => process.env[key] ?? fallback;
 const num = (key: string) => (env(key) ? Number(env(key)) : undefined);
 
-const venue = env("VENUE", "kuru") as "kuru" | "upbit";
-const upbitAccessKey = env("UPBIT_ACCESS_KEY"), upbitSecretKey = env("UPBIT_SECRET_KEY");
+const venue = env("VENUE", "kuru") as "kuru" | "okx";
+const okxKey = env("OKX_API_KEY"), okxSecret = env("OKX_SECRET_KEY"), okxPassphrase = env("OKX_PASSPHRASE");
 /** Live only with credentials for the chosen venue and DRY_RUN not "true". */
-const hasKeys = venue === "upbit" ? !!(upbitAccessKey && upbitSecretKey) : !!env("PRIVATE_KEY");
+const hasKeys = venue === "okx" ? !!(okxKey && okxSecret && okxPassphrase) : !!env("PRIVATE_KEY");
 
 export const config = {
-  /** Which exchange the bot trades on. kuru: Monad's on-chain book, one order per block. upbit: KRW market, one order per 300 ms tick. */
+  /** Which exchange the bot trades on. kuru: Monad's on-chain spot book, one order per block. okx: a USDT perpetual swap, one order per 300 ms tick. */
   venue,
   rpcUrl: env("RPC_URL", "https://rpc.monad.xyz")!, // sends, receipts, nonce, gas estimation
   readRpcUrl: env("READ_RPC_URL", "https://rpc.monad.xyz")!, // book reads + eth_blockNumber polling + trade logs
@@ -18,16 +18,23 @@ export const config = {
   marginAccount: env("MARGIN_ACCOUNT", "0x2A68ba1833cDf93fa9Da1EEbd7F46242aD8E90c5")!,
   privateKey: env("PRIVATE_KEY"),
   dryRun: env("DRY_RUN") === "true" || !hasKeys,
-  upbit: {
-    accessKey: upbitAccessKey,
-    secretKey: upbitSecretKey,
-    market: env("UPBIT_MARKET", "KRW-MON")!, // any KRW market (KRW-BTC, KRW-ETH, ...): the tick table and the 5,000 KRW minimum are KRW rules
-    /** Charged on every fill, maker included. Used for simulated fills; live fills carry Upbit's own trade_fee. */
-    feeRate: Number(env("UPBIT_FEE_RATE", "0.0005")),
+  okx: {
+    apiKey: okxKey,
+    secretKey: okxSecret,
+    passphrase: okxPassphrase,
+    /** USDT-margined perpetual swap. Sizes (TRADE_SIZE, MAX_POSITION) are in its underlying, converted to contracts. */
+    instId: env("OKX_INST_ID", "MON-USDT-SWAP")!,
+    /** Demo trading (OKX's paper account, `x-simulated-trading: 1`) unless OKX_DEMO=false. Demo keys only work there. */
+    demo: env("OKX_DEMO", "true") !== "false",
+    /** isolated caps the loss at the margin posted for this swap; cross shares the whole USDT balance. */
+    marginMode: env("OKX_MARGIN_MODE", "isolated") as "isolated" | "cross",
+    leverage: Number(env("OKX_LEVERAGE", "2")),
+    /** Maker fee rate for simulated fills (OKX's regular tier). Live fills carry OKX's own fillFee. */
+    makerFeeRate: Number(env("OKX_MAKER_FEE_RATE", "0.0002")),
     /** Length of one loop step. No chain, so a timer stands in for the block. */
-    tickMs: Number(env("UPBIT_TICK_MS", "300")),
+    tickMs: Number(env("OKX_TICK_MS", "300")),
   },
-  /** Order size in the base asset (MON on Kuru; the coin of UPBIT_MARKET on Upbit). TRADE_SIZE_MON still works. */
+  /** Order size in the base asset (MON on Kuru; the swap's underlying on OKX). TRADE_SIZE_MON still works. */
   tradeSize: Number(env("TRADE_SIZE", env("TRADE_SIZE_MON", "200"))), // Kuru MON-USDC minimum order is 200 MON
   maxPosition: Number(env("MAX_POSITION", env("MAX_POSITION_MON", "1000"))),
   /**

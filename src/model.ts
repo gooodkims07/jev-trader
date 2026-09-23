@@ -8,7 +8,7 @@ export type Action = "buy" | "sell" | "hold";
 
 /** What the model sees. Compact, relative, human-readable. */
 export interface TradeState {
-  market: string; // "MON-USDC" on Kuru, "<COIN>-KRW" on Upbit; sizes below are in that base asset
+  market: string; // "MON-USDC" on Kuru, "<COIN>-USDT PERP" on OKX; sizes below are in that base asset
   block: number;
   horizonBlocks: number; // the question is about the move over this many blocks
   blockMs: number;
@@ -43,8 +43,9 @@ export interface Model {
 /** Where the order goes, in the venue's own terms. Everything else in the question is shared. */
 function goal(v: VenueInfo): string {
   if (v.name === "kuru") return "Make markets on MON-USDC on Kuru. Blocks are ~300 ms; `horizonBlocks` (~30 s) is the horizon. Every block one post-only limit order goes on the side you pick, just inside the touch, replacing the previous one. It never crosses, so we earn `spreadBps` rather than pay it. The cost is adverse selection: a taker fills us exactly when the market is about to run the other way. Pick the side whose inventory you want to be holding `horizonBlocks` from now.";
-  const feeBps = Math.round(config.upbit.feeRate * 10_000);
-  return `Make markets on ${v.symbol} on ${v.label}. Each block here is a 300 ms tick; \`horizonBlocks\` (~30 s) is the horizon. Every tick one post-only limit order goes on the side you pick, just inside the touch, replacing the previous one. It never crosses, so we earn \`spreadBps\` rather than pay it, less a fee of about ${feeBps} bps per fill. The spread is often a single price step. The cost is adverse selection: a taker fills us exactly when the market is about to run the other way. Pick the side whose inventory you want to be holding \`horizonBlocks\` from now.`;
+  // OKX: a USDT perpetual swap. A fill is a position change, not a coin changing hands.
+  const feeBps = Math.round(config.okx.makerFeeRate * 10_000 * 10) / 10;
+  return `Make markets on the ${v.base}-USDT perpetual swap on ${v.label}. Each block here is a 300 ms tick; \`horizonBlocks\` (~30 s) is the horizon. Every tick one post-only limit order goes on the side you pick, just inside the touch, replacing the previous one. It never crosses, so we earn \`spreadBps\` rather than pay it, less a maker fee of about ${feeBps} bps per fill. A bid fill makes our position longer and an ask fill makes it shorter; being short is as easy as being long. The cost is adverse selection: a taker fills us exactly when the market is about to run the other way. Pick the side whose inventory you want to be holding \`horizonBlocks\` from now.`;
 }
 
 /**

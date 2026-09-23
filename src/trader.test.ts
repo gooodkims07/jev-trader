@@ -25,8 +25,8 @@ const book = (block: number): Book => ({
 function fakeVenue(price = 34.9): Venue & { trades: FakeTrades; sent: OrderId[][] } {
   const sent: OrderId[][] = [];
   return {
-    info: { name: "upbit", label: "Upbit", market: "KRW-MON", symbol: "MON-KRW", base: "MON", quoteCcy: "KRW", priceDecimals: 1, sizeDecimals: 1, clock: "tick", txUrl: null },
-    account: null, live: false, funds: { mon: 0, quote: 0 }, makerFeeRate: 0.0005,
+    info: { name: "okx", label: "OKX", market: "MON-USDT-SWAP", symbol: "MON-USDT PERP", base: "MON", quoteCcy: "USDT", priceDecimals: 1, sizeDecimals: 1, clock: "tick", txUrl: null },
+    account: null, live: false, canAfford: () => true, makerFeeRate: 0.0005,
     trades: new FakeTrades(), sent,
     async init() {}, startClock() {}, async refresh() {},
     async readBook() { return book(0); },

@@ -12,19 +12,25 @@ With no `PRIVATE_KEY` it dry-runs: real book, real decisions, simulated fills. S
 
 ## Venues
 
-Kuru on Monad is the default and the demo. `VENUE=upbit` runs the same loop on an Upbit KRW market instead: `UPBIT_MARKET` picks the coin (default `KRW-MON`; `KRW-BTC`, `KRW-ETH` and any other KRW market work). Everything exchange specific sits behind the `Venue` interface in `src/venue.ts`; the Trader, the model and the server only see that.
+Kuru on Monad is the default and the demo. `VENUE=okx` runs the same loop on an OKX USDT perpetual swap instead: `OKX_INST_ID` picks it (default `MON-USDT-SWAP`). Everything exchange specific sits behind the `Venue` interface in `src/venue.ts`; the Trader, the model and the server only see that.
 
-| | Kuru (`VENUE=kuru`) | Upbit (`VENUE=upbit`) |
+| | Kuru (`VENUE=kuru`) | OKX (`VENUE=okx`) |
 |---|---|---|
-| Clock | Monad blocks (~300 ms) | a 300 ms timer (`UPBIT_TICK_MS`); `block` in events is the tick number |
-| Book, prints | `eth_call` getL2Book, `eth_getLogs` Trade | public WebSocket orderbook + trade, REST fallback |
-| Order | one `batchUpdate` tx: cancel + post-only place | `DELETE /v1/order` for what rests, then `POST /v1/orders` with `time_in_force: post_only` |
-| Our fills | Trade logs with us as maker | private WebSocket `myOrder`, plus the executed volume in every cancel response |
-| Cost | gas on the gas limit (`gasMon`) | fee on every fill, maker included (`UPBIT_FEE_RATE`, `feesUsd`) |
-| Money | USDC | KRW (every `...Usd` field is in the venue's quote currency) |
-| Live when | `PRIVATE_KEY` is set | `UPBIT_ACCESS_KEY` and `UPBIT_SECRET_KEY` are set |
+| Product | spot MON-USDC | USDT-margined perpetual swap |
+| Clock | Monad blocks (~300 ms) | a 300 ms timer (`OKX_TICK_MS`); `block` in events is the tick number |
+| Book, prints | `eth_call` getL2Book, `eth_getLogs` Trade | public WebSocket `books5` + `trades`, REST fallback |
+| Order | one `batchUpdate` tx: cancel + post-only place | `cancel-order` for what rests, then `order` with `ordType: post_only` |
+| Our fills | Trade logs with us as maker | private WebSocket `orders` (`fillSz`, `fillPx`, `fillFee`) |
+| Funds | margin account: USDC for bids, MON for asks | USDT margin for either side (notional / `OKX_LEVERAGE`); reducing the position needs none |
+| Cost | gas on the gas limit (`gasMon`) | maker fee per fill from the account's fee tier (`feesUsd`); funding is not counted |
+| Money | USDC | USDT (every `...Usd` field is in the venue's quote currency) |
+| Live when | `PRIVATE_KEY` is set | `OKX_API_KEY`, `OKX_SECRET_KEY` and `OKX_PASSPHRASE` are set |
 
-Upbit notes: API keys only work from the IP addresses registered with them, and need the asset, order and order inquiry permissions. Sizes are in the coin being traded: `TRADE_SIZE` must clear the 5,000 KRW minimum, and for any coin other than MON both `TRADE_SIZE` and `MAX_POSITION` must be set (the defaults and `TRADE_SIZE_MON` are MON amounts, so the bot refuses to start without them). Jev's question names the coin, and the dashboard shows sizes in it and P&L in KRW. KRW-MON moves in 0.1 KRW steps (~29 bps), so the spread is often one step and the order joins the touch. On startup a live run cancels open orders it left behind (identifier prefix `jev-`). The snapshot carries `venue` so the dashboard labels itself (pair, exchange, block or tick, price decimals).
+OKX notes:
+- Sizes stay in the underlying and are converted to contracts: MON-USDT-SWAP contracts are 10 MON, so `TRADE_SIZE` must be a multiple of 10. For any other swap set `TRADE_SIZE` and `MAX_POSITION` in its underlying; the bot refuses to start otherwise.
+- `OKX_DEMO` defaults to `true`: live runs go to OKX demo trading (`x-simulated-trading: 1`, demo keys). Demo trading lists fewer swaps and **not MON-USDT-SWAP**; use e.g. `BTC-USDT-SWAP` there. A dry run always reads the real market. `OKX_DEMO=false` trades real money.
+- The account must be in net position mode. Startup sets `OKX_LEVERAGE` (default 2) and `OKX_MARGIN_MODE` (default `isolated`) for the swap, reads the maker fee, cancels orders it left behind (client ids starting `jev`), and refuses to start with a position already open. Ctrl-C cancels our open orders and warns if a position is left; it never closes a position for you.
+- Register the API key's IP with OKX and give it read and trade permissions only (no withdrawal).
 
 ## Endpoints
 
@@ -68,8 +74,8 @@ Live sends are fired and forgotten, so the `block` event carries the **intent**:
     src/book.ts     one-eth_call order book reader (decodes getL2Book, merges the AMM vault)
     src/venue.ts    Venue interface and the types shared by every exchange
     src/market.ts   KuruVenue: read book, hand-encoded batchUpdate (cancel + post-only place), margin deposits, local nonce, async confirmation
-    src/upbit.ts    UpbitVenue: WebSocket book and prints, myOrder fills, cancel then post-only place
-    src/upbit-api.ts  Upbit REST with JWT (HS512) auth, KRW price unit table
+    src/okx.ts      OkxVenue: USDT perpetual swap, WebSocket book and prints, private orders fills, cancel then post-only place
+    src/okx-api.ts  OKX v5 REST with HMAC-SHA256 signing, demo trading header, clock sync
     src/model.ts    Model interface, JevModel (AI SDK experimental_evaluate), MockModel
     src/trader.ts   the loop: one in flight, hold when late, position and P&L accounting
     src/server.ts   Bun.serve: snapshot, history, SSE

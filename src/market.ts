@@ -35,6 +35,11 @@ export class KuruVenue implements Venue {
   params!: Kuru.MarketParams; // public so scripts can build txs without init()
   /** Margin account balances, refreshed every `config.refreshBlocks`. Limit orders draw from here. */
   readonly funds = { mon: 0, quote: 0 };
+
+  /** Kuru debits margin when an order is placed, so the balance already excludes what is resting. */
+  canAfford(side: Side, size: number, book: Book) {
+    return side === "buy" ? this.funds.quote >= size * book.ask : this.funds.mon >= size;
+  }
   private iface = new ethers.utils.Interface(OrderBookAbi.abi);
   private marginIface = new ethers.utils.Interface(MarginAccountAbi.abi);
   private nonce = 0;

@@ -9,8 +9,8 @@ export interface Position { side: "long" | "short" | "flat"; size: number; entry
 export interface Totals { blocks: number; decisions: number; quotes: number; fills: number; reverted: number; lateBlocks: number; jevUsd: number; gasMon: number; gasUsd: number; feesUsd?: number; realizedUsd: number; pnlUsd: number; pnlMon: number; pnlPct: number }
 export interface BlockEvent { block: number; ts: number; mid: number; bestBid: number; bestAsk: number; spreadBps: number; decision: Decision | null; quote: Quote | null; fill: Fill | null; resting: { bidMon: number; askMon: number }; position: Position; totals: Totals }
 /** Which exchange the server trades on. Money fields named ...Usd are in `quoteCcy`; size fields named ...Mon are in `base`. */
-export interface VenueInfo { name: "kuru" | "upbit"; label: string; market: string; symbol: string; base: string; quoteCcy: string; priceDecimals: number; sizeDecimals: number; clock: "block" | "tick"; txUrl: string | null }
-/** `wallet` is the Kuru wallet address, or an Upbit account label. `venue` is absent on older servers (Kuru). */
+export interface VenueInfo { name: "kuru" | "okx"; label: string; market: string; symbol: string; base: string; quoteCcy: string; priceDecimals: number; sizeDecimals: number; clock: "block" | "tick"; txUrl: string | null }
+/** `wallet` is the Kuru wallet address, or an OKX account label. `venue` is absent on older servers (Kuru). */
 export interface Meta { model: string; wallet: string | null; dryRun: boolean; market: string; venue?: VenueInfo; startedAt: number }
 export type ConnectionState = "connecting" | "live" | "reconnecting";
 export interface FeedState { meta: Meta | null; events: BlockEvent[]; latest: BlockEvent | null; connection: ConnectionState; avgLatencyMs: number }

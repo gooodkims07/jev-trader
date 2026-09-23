@@ -138,7 +138,7 @@ export default function Feed({ events }: { events: BlockEvent[] }) {
                       {quote.status === "reverted" ? "rev" : quote.status === "lost" ? "lost" : shortTx(quote.txHash)}
                     </a>
                   ) : quote ? (
-                    // No chain (Upbit): nothing to link, so show where the order stands.
+                    // No chain (OKX): nothing to link, so show where the order stands.
                     <span className={quote.status === "sent" ? styles.pending : quote.status === "placed" ? undefined : styles.muted} title={quote.status}>
                       {quote.status === "placed" ? "live" : quote.status === "reverted" ? "rej" : quote.status}
                     </span>

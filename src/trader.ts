@@ -34,7 +34,7 @@ export interface Totals {
   jevUsd: number;
   gasMon: number;
   gasUsd: number;
-  /** Exchange fees on fills (Upbit charges makers too; Kuru fills carry 0). */
+  /** Exchange fees on fills, net of rebates (OKX charges or rebates makers; Kuru fills carry 0). */
   feesUsd: number;
   realizedUsd: number;
   pnlUsd: number;
@@ -226,9 +226,7 @@ export class Trader {
     const size = config.tradeSize;
     const exposure = side === "buy" ? this.position.mon + this.restingMon("buy") + size : this.position.mon - this.restingMon("sell") - size;
     if (Math.abs(exposure) > config.maxPosition) return false;
-    if (!this.venue.live) return true;
-    // Both venues lock funds when an order is placed, so the balance already excludes what is resting.
-    return side === "buy" ? this.venue.funds.quote >= size * book.ask : this.venue.funds.mon >= size;
+    return !this.venue.live || this.venue.canAfford(side, size, book);
   }
 
   private buildState(block: number, book: Book): TradeState {

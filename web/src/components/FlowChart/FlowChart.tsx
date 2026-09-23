@@ -209,7 +209,7 @@ export default function FlowChart({
   // Kuru shows P&L in MON, as it always has. Elsewhere one base unit can be worth a lot (BTC), so show
   // it in the quote currency instead.
   const pnlQuote = shown?.totals?.pnlUsd ?? 0;
-  const pnlText = venue.name === "kuru" ? fmtSignedMon(pnlMon, 3) : `${fmtSigned(pnlQuote, venue.quoteCcy === "KRW" ? 1 : 4)} ${venue.quoteCcy}`;
+  const pnlText = venue.name === "kuru" ? fmtSignedMon(pnlMon, 3) : `${fmtSigned(pnlQuote, 4)} ${venue.quoteCcy}`;
   const pnlSign = venue.name === "kuru" ? pnlMon : pnlQuote;
 
   return (
