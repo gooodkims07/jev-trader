@@ -42,7 +42,8 @@ export interface Totals {
   pnlPct: number;
 }
 
-interface Resting { side: Side; price: number; size: number; block: number }
+/** `ahead`: dry run only, the size resting at our price before us (price-time priority). */
+interface Resting { side: Side; price: number; size: number; block: number; ahead?: number }
 
 /** Simulated orders have negative ids; they never go to the venue. */
 const isReal = (id: OrderId) => typeof id === "string" || id > 0;
@@ -55,7 +56,7 @@ const isReal = (id: OrderId) => typeof id === "string" || id > 0;
  * Live sends are fire-and-forget: the block event carries the quote as `sent`; its confirmation
  * (`placed` with an order id, or `reverted`) is applied when it turns up on a later block. Fills
  * come from the venue's trade feed: a taker hit one of our resting orders. Dry runs simulate both:
- * the order rests for one block and fills when a real print crosses its price.
+ * the order rests for one block and fills from real prints, behind whatever already rested at its price.
  */
 export class Trader {
   readonly history: BlockEvent[] = [];
@@ -115,7 +116,7 @@ export class Trader {
         this.totals.quotes++;
         if (quote.status === "sim") {
           this.orders.clear(); // the simulated cancel
-          this.orders.set(--this.simId, { side, price: quote.price, size: quote.size, block });
+          this.orders.set(--this.simId, { side, price: quote.price, size: quote.size, block, ahead: queueAhead(side, quote.price, book) });
         } else if (quote.ref) {
           this.inflight.set(quote.ref, quote);
         }
@@ -178,17 +179,33 @@ export class Trader {
   }
 
   /**
-   * A simulated order placed at block N is on the book from N+1. A taker sell printing at or below
-   * our bid (or a taker buy at or above our ask) would have taken us first: fill up to the print's size.
+   * A simulated order placed at block N is on the book from N+1, behind the size that already rested at
+   * its price (`ahead`; 0 when it improved the touch). Only taker flow against our side counts:
+   *   - a print AT our price eats the queue ahead of us first, and fills us with whatever is left;
+   *   - a print THROUGH our price means our whole level was taken, so the rest of our order fills.
+   * Size ahead that cancels is not credited, so this errs toward fewer fills, never more.
    */
   private simFills(prints: TradePrint[]): (Fill & { block: number })[] {
     const out: (Fill & { block: number })[] = [];
     for (const p of prints) {
       for (const [id, o] of this.orders) {
         if (p.block <= o.block || o.size <= 0) continue;
-        const hit = o.side === "buy" ? p.side === "sell" && p.price <= o.price : p.side === "buy" && p.price >= o.price;
-        if (!hit) continue;
-        const size = Math.min(o.size, p.size);
+        const against = o.side === "buy" ? p.side === "sell" : p.side === "buy";
+        if (!against) continue;
+        const eps = o.price * 1e-9;
+        const at = Math.abs(p.price - o.price) <= eps;
+        const through = o.side === "buy" ? p.price < o.price - eps : p.price > o.price + eps;
+        if (!at && !through) continue;
+        let size: number;
+        if (through) {
+          o.ahead = 0;
+          size = o.size;
+        } else {
+          const eaten = Math.min(o.ahead ?? 0, p.size);
+          o.ahead = (o.ahead ?? 0) - eaten;
+          size = Math.min(o.size, p.size - eaten);
+        }
+        if (size <= 1e-12) continue;
         o.size -= size;
         if (o.size <= 1e-9) this.orders.delete(id);
         out.push({ side: o.side, size, price: o.price, txHash: null, orderId: id, simulated: true, fee: size * o.price * this.venue.makerFeeRate, block: p.block });
@@ -290,6 +307,13 @@ export class Trader {
     appendFileSync("data/events.jsonl", JSON.stringify(event) + "\n");
     this.onEvent(event, timing);
   }
+}
+
+/** Size already resting at `price` on our side of the book: the queue a new order joins behind. 0 inside the spread. */
+export function queueAhead(side: Side, price: number, book: Book): number {
+  const levels = side === "buy" ? book.levels.bids : book.levels.asks;
+  const level = levels.find(([p]) => Math.abs(p - price) <= price * 1e-9);
+  return level ? level[1] : 0;
 }
 
 /** Several fills in one block become one: total size, size-weighted price, the side with more size. */

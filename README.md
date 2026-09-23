@@ -59,7 +59,7 @@ Live sends are fired and forgotten, so the `block` event carries the **intent**:
     event: fill
     data: { "block": 105488271, "fill": { "side": "buy", "size": 200, "price": 0.022629, "txHash": "0x…", "orderId": 100295812, "simulated": false } }
 
-`txHash` is the taker's transaction. In a dry run the quote is `status: "sim"`: the order rests for one block and a real print crossing its price fills it (`simulated: true`).
+`txHash` is the taker's transaction. In a dry run the quote is `status: "sim"`: the order rests for one block and fills from real prints (`simulated: true`), queued behind the size already resting at its price. A print at our price eats that queue first and fills us with the rest; a print through our price fills us in full. An order one tick inside the touch has no queue. Queue size that cancels is not credited, so simulated fills err low.
 
 ## Layout
 
