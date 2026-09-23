@@ -9,8 +9,8 @@ await venue.init();
 const model = createModel(venue.info);
 const { info } = venue;
 const px = (p: number) => p.toFixed(info.priceDecimals);
-// On a coarse book a mid can sit half a price unit off the grid: one more decimal, unless prices are whole. Kuru logs as it always has.
-const pxMid = (p: number) => p.toFixed(info.name === "kuru" || info.priceDecimals === 0 ? info.priceDecimals : info.priceDecimals + 1);
+// Off Kuru a mid can sit half a price unit off the grid (2136.5 on a 1 KRW book): one more decimal, shown only when not zero.
+const pxMid = (p: number) => (info.name === "kuru" ? px(p) : p.toFixed(info.priceDecimals + 1).replace(/0$/, "").replace(/\.$/, ""));
 
 const server = startServer(
   { model: model.name, wallet: venue.account, dryRun: !venue.live, market: info.market, venue: info, startedAt: Date.now() },

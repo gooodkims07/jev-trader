@@ -136,7 +136,7 @@ export default function FlowChart({
 
     const ticks = [0.25, 0.5, 0.75].map((f) => ({
       y: PAD_TOP + plotH * f,
-      label: fmtPrice(lo + (1 - f) * range, venue.midDecimals),
+      label: venue.fmtMid(lo + (1 - f) * range),
     }));
 
     const byBlock = new Map(series.map((e) => [e.block, e]));
@@ -157,7 +157,7 @@ export default function FlowChart({
       shift: w - ANCHOR_GAP - fx(last.block),
       endY: fy(last.mid),
     };
-  }, [events, latest, w, h, venue.midDecimals]);
+  }, [events, latest, w, h, venue]);
 
   const hv = useMemo(() => {
     if (!model || hover === null) return null;
@@ -175,7 +175,7 @@ export default function FlowChart({
       tx: flip ? x - 146 : x + 14,
       ty,
       block: `#${e.block}`,
-      price: fmtPrice(e.mid, venue.midDecimals),
+      price: venue.fmtMid(e.mid),
       trade: side ? `FILL ${side} ${venue.name === "kuru" ? fmtMon(e.fill!.size, 0) : fmtMon(e.fill!.size, venue.sizeDecimals, venue.base)}` : quoteText,
       tint: e.fill ? (e.fill.side === "buy" ? "var(--buy-ink)" : "var(--sell-ink)") : q ? (q.side === "buy" ? "var(--buy-ink)" : "var(--sell-ink)") : "var(--muted)",
       lat: e.decision && !e.decision.late ? `${Math.round(e.decision.latencyMs)} ms` : "late",
@@ -326,7 +326,7 @@ export default function FlowChart({
                 <circle cx={w - ANCHOR_GAP} cy="0" r="4" fill="var(--ink)" />
                 <rect x={w - TAG_W - 4} y="-10" width={TAG_W} height="20" rx="999" fill="var(--ink)" />
                 <text className={styles.tagText} x={w - 4 - TAG_W / 2} y="4" textAnchor="middle">
-                  {fmtPrice(model.last.mid, venue.midDecimals)}
+                  {venue.fmtMid(model.last.mid)}
                 </text>
               </g>
             </svg>
@@ -335,7 +335,7 @@ export default function FlowChart({
 
             <div className={styles.tl}>
               <div className={styles.price} key={shown.mid}>
-                {fmtPrice(shown.mid, venue.midDecimals)}
+                {venue.fmtMid(shown.mid)}
               </div>
               <div className={styles.sub}>
                 <span>{venue.pair}</span>
