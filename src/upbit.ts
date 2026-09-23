@@ -21,9 +21,11 @@ const RING = 500;
 const WARMUP_TRADES = 500;
 /**
  * The socket only sends the book when it changes, so a quiet book is not a stale one. Trust it while
- * the socket is open and has said anything (book or trade) this recently; otherwise read over REST.
+ * the socket has said anything (book, trade, or the reply to our PING) this recently; otherwise read
+ * over REST. PING_MS keeps a quiet socket answering well inside that window.
  */
 const SOCKET_QUIET_MS = 10_000;
+const PING_MS = 3_000;
 /** Our orders carry identifiers with this prefix, so the fill stream ignores orders placed by hand. */
 const ID_PREFIX = "jev-";
 
@@ -317,7 +319,10 @@ export class UpbitVenue implements Venue {
     });
   }
 
-  /** One WebSocket, reconnected with backoff. Upbit sends binary frames and drops sockets idle for 120 s. */
+  /**
+   * One WebSocket, reconnected with backoff. Upbit sends binary frames and drops sockets idle for 120 s.
+   * The PING reply ({"status":"UP"}) is passed on like any message, so it counts as the socket being alive.
+   */
   private socket(url: string, headers: () => Record<string, string>, onClose: () => void, subscribe: unknown[], onMessage: (m: { type?: string }) => void) {
     const decoder = new TextDecoder();
     const connect = (delay = 0) =>
@@ -328,13 +333,12 @@ export class UpbitVenue implements Venue {
         ws.onopen = () => {
           delay = 0;
           ws.send(JSON.stringify(subscribe));
-          ping = setInterval(() => { try { ws.send("PING"); } catch {} }, 60_000);
+          ping = setInterval(() => { try { ws.send("PING"); } catch {} }, PING_MS);
         };
         ws.onmessage = (e) => {
           const text = typeof e.data === "string" ? e.data : decoder.decode(e.data as ArrayBuffer);
           let m: { type?: string; status?: string };
           try { m = JSON.parse(text); } catch { return; }
-          if (m.status === "UP") return; // reply to PING
           onMessage(m);
         };
         ws.onclose = () => { clearInterval(ping); onClose(); connect(Math.min(delay + 1000, 10_000)); };
