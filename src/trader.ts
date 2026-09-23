@@ -111,7 +111,7 @@ export class Trader {
       if (side) {
         decision.action = side;
         const cancel = [...this.orders.keys()].filter(isReal);
-        quote = await this.venue.send(block, side, config.tradeSizeMon, book, cancel, side !== wanted);
+        quote = await this.venue.send(block, side, config.tradeSize, book, cancel, side !== wanted);
         this.totals.quotes++;
         if (quote.status === "sim") {
           this.orders.clear(); // the simulated cancel
@@ -159,7 +159,7 @@ export class Trader {
       byBlock.set(b, [...(byBlock.get(b) ?? []), f]);
     }
     for (const [block, fs] of byBlock) {
-      const fill = aggregate(fs);
+      const fill = aggregate(fs, Math.max(4, this.venue.info.sizeDecimals));
       const e = this.history.find((h) => h.block === block);
       if (e) e.fill = fill;
       this.onFill(block, fill);
@@ -206,9 +206,9 @@ export class Trader {
 
   /** Would this order, and everything already resting on its side, keep us inside the cap and (live) inside funds? */
   private allowed(side: Side, book: Book) {
-    const size = config.tradeSizeMon;
+    const size = config.tradeSize;
     const exposure = side === "buy" ? this.position.mon + this.restingMon("buy") + size : this.position.mon - this.restingMon("sell") - size;
-    if (Math.abs(exposure) > config.maxPositionMon) return false;
+    if (Math.abs(exposure) > config.maxPosition) return false;
     if (!this.venue.live) return true;
     // Both venues lock funds when an order is placed, so the balance already excludes what is resting.
     return side === "buy" ? this.venue.funds.quote >= size * book.ask : this.venue.funds.mon >= size;
@@ -218,9 +218,10 @@ export class Trader {
     const m = this.mids, n = m.length, H = config.horizonBlocks;
     const ret = (k: number) => (n > k ? ((m[n - 1]! - m[n - 1 - k]!) / m[n - 1 - k]!) * 10_000 : 0);
     const sampled = m.slice(-H).filter((_, i, a) => (a.length - 1 - i) % 5 === 0); // every 5th block, newest included
-    const lvl = (l: [number, number]) => `${l[0].toFixed(6)} x ${round(l[1], 1)}`;
+    const { priceDecimals: pd, sizeDecimals: sd } = this.venue.info;
+    const lvl = (l: [number, number]) => `${l[0].toFixed(pd)} x ${round(l[1], sd)}`;
     const depth: TradeState["depth"] = {};
-    for (const [k, v] of Object.entries(book.depthBps)) depth[k + "bps"] = { bid: round(v.bid, 1), ask: round(v.ask, 1) };
+    for (const [k, v] of Object.entries(book.depthBps)) depth[k + "bps"] = { bid: round(v.bid, sd), ask: round(v.ask, sd) };
     return {
       market: this.venue.info.symbol,
       block,
@@ -232,9 +233,9 @@ export class Trader {
       depth,
       book: { bids: book.levels.bids.map(lvl), asks: book.levels.asks.map(lvl) },
       returnsBps: { last1: round(ret(1), 2), last5: round(ret(5), 2), last20: round(ret(20), 2), last100: round(ret(100), 2) },
-      recentMids: sampled.map((x) => x.toFixed(6)).join(" "),
+      recentMids: sampled.map((x) => x.toFixed(pd + (this.venue.info.name === "kuru" ? 0 : 1))).join(" "),
       trades: this.venue.trades.summary(H, block),
-      recentTrades: this.venue.trades.recent(10).map((t) => `${t.block} ${t.side} ${round(t.size, 1)} @ ${t.price.toFixed(6)}`),
+      recentTrades: this.venue.trades.recent(10).map((t) => `${t.block} ${t.side} ${round(t.size, sd)} @ ${t.price.toFixed(pd)}`),
       allowed: { buy: this.allowed("buy", book), sell: this.allowed("sell", book) },
     };
   }
@@ -277,7 +278,7 @@ export class Trader {
         : decision && { action: decision.action, probabilities: decision.probabilities, upIn10: decision.upIn10, latencyMs: Math.round(decision.latencyMs), late: false },
       quote,
       fill: null,
-      resting: { bidMon: round(this.restingMon("buy"), 1), askMon: round(this.restingMon("sell"), 1) },
+      resting: { bidMon: round(this.restingMon("buy"), this.venue.info.sizeDecimals), askMon: round(this.restingMon("sell"), this.venue.info.sizeDecimals) },
       position: {
         side: this.position.mon > 0 ? "long" : this.position.mon < 0 ? "short" : "flat",
         size, entryPrice: this.entryPrice(), unrealizedUsd: round(unrealized, 4), unrealizedMon: round(unrealized / book.mid, 4),
@@ -292,7 +293,7 @@ export class Trader {
 }
 
 /** Several fills in one block become one: total size, size-weighted price, the side with more size. */
-function aggregate(fills: Fill[]): Fill {
+function aggregate(fills: Fill[], sizeDecimals: number): Fill {
   const buy = fills.filter((f) => f.side === "buy").reduce((s, f) => s + f.size, 0);
   const sell = fills.filter((f) => f.side === "sell").reduce((s, f) => s + f.size, 0);
   const side: Side = buy >= sell ? "buy" : "sell";
@@ -300,7 +301,7 @@ function aggregate(fills: Fill[]): Fill {
   const size = same.reduce((s, f) => s + f.size, 0);
   const price = same.reduce((s, f) => s + f.size * f.price, 0) / size;
   const fee = fills.reduce((s, f) => s + f.fee, 0);
-  return { side, size: round(size, 4), price, txHash: same[0]!.txHash, orderId: same[0]!.orderId, simulated: same[0]!.simulated, fee };
+  return { side, size: round(size, sizeDecimals), price, txHash: same[0]!.txHash, orderId: same[0]!.orderId, simulated: same[0]!.simulated, fee };
 }
 
 const round = (x: number, d: number) => Math.round(x * 10 ** d) / 10 ** d;

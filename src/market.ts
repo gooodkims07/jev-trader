@@ -25,8 +25,8 @@ interface Pending { block: number; quote: Quote; gasLimit: ethers.BigNumber }
 /** Kuru MON-USDC market on Monad: read the book, post one limit order per block, confirm asynchronously. */
 export class KuruVenue implements Venue {
   readonly info: VenueInfo = {
-    name: "kuru", label: "Kuru", market: config.market, symbol: "MON-USDC", quoteCcy: "USDC",
-    priceDecimals: 6, clock: "block", txUrl: "https://monadvision.com/tx/",
+    name: "kuru", label: "Kuru", market: config.market, symbol: "MON-USDC", base: "MON", quoteCcy: "USDC",
+    priceDecimals: 6, sizeDecimals: 1, clock: "block", txUrl: "https://monadvision.com/tx/",
   };
   readonly makerFeeRate = 0;
   readonly provider = new ethers.providers.StaticJsonRpcProvider(config.rpcUrl, config.chainId);
@@ -235,8 +235,8 @@ export class KuruVenue implements Venue {
     else {
       try {
         const book = await this.readBook();
-        const side: Side = this.funds.quote >= config.tradeSizeMon * book.ask ? "buy" : "sell";
-        const data = this.encode(side, config.tradeSizeMon, this.quotePrice(side, book), []);
+        const side: Side = this.funds.quote >= config.tradeSize * book.ask ? "buy" : "sell";
+        const data = this.encode(side, config.tradeSize, this.quotePrice(side, book), []);
         const est = await this.provider.estimateGas({ to: config.market, from: this.wallet!.address, data });
         this.gasLimit = est.add(90_000).mul(115).div(100);
       } catch (e) {

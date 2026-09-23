@@ -12,7 +12,7 @@ With no `PRIVATE_KEY` it dry-runs: real book, real decisions, simulated fills. S
 
 ## Venues
 
-Kuru on Monad is the default and the demo. `VENUE=upbit` runs the same loop on Upbit's KRW market instead (`UPBIT_MARKET`, default `KRW-MON`). Everything exchange specific sits behind the `Venue` interface in `src/venue.ts`; the Trader, the model and the server only see that.
+Kuru on Monad is the default and the demo. `VENUE=upbit` runs the same loop on an Upbit KRW market instead: `UPBIT_MARKET` picks the coin (default `KRW-MON`; `KRW-BTC`, `KRW-ETH` and any other KRW market work). Everything exchange specific sits behind the `Venue` interface in `src/venue.ts`; the Trader, the model and the server only see that.
 
 | | Kuru (`VENUE=kuru`) | Upbit (`VENUE=upbit`) |
 |---|---|---|
@@ -24,7 +24,7 @@ Kuru on Monad is the default and the demo. `VENUE=upbit` runs the same loop on U
 | Money | USDC | KRW (every `...Usd` field is in the venue's quote currency) |
 | Live when | `PRIVATE_KEY` is set | `UPBIT_ACCESS_KEY` and `UPBIT_SECRET_KEY` are set |
 
-Upbit notes: API keys only work from the IP addresses registered with them, and need the asset, order and order inquiry permissions. `TRADE_SIZE_MON` must clear the 5,000 KRW minimum. KRW-MON moves in 0.1 KRW steps (~29 bps), so the spread is often one step and the order joins the touch. On startup a live run cancels open orders it left behind (identifier prefix `jev-`). The snapshot carries `venue` so the dashboard labels itself (pair, exchange, block or tick, price decimals).
+Upbit notes: API keys only work from the IP addresses registered with them, and need the asset, order and order inquiry permissions. Sizes are in the coin being traded: `TRADE_SIZE` must clear the 5,000 KRW minimum, and for any coin other than MON both `TRADE_SIZE` and `MAX_POSITION` must be set (the defaults and `TRADE_SIZE_MON` are MON amounts, so the bot refuses to start without them). Jev's question names the coin, and the dashboard shows sizes in it and P&L in KRW. KRW-MON moves in 0.1 KRW steps (~29 bps), so the spread is often one step and the order joins the touch. On startup a live run cancels open orders it left behind (identifier prefix `jev-`). The snapshot carries `venue` so the dashboard labels itself (pair, exchange, block or tick, price decimals).
 
 ## Endpoints
 
@@ -47,7 +47,7 @@ Every event (see `src/trader.ts` for types):
       "totals": { "blocks": 3, "decisions": 3, "quotes": 3, "fills": 1, "reverted": 0, "lateBlocks": 0, "jevUsd": 0.000004, "gasMon": 0.107, "gasUsd": 0.0024, "realizedUsd": 0, "pnlUsd": -0.003, "pnlMon": -0.13, "pnlPct": -0.003 }
     }
 
-Every block the model is asked about the move over `HORIZON_BLOCKS` (default 100, ~30 s) and answers `buy` or `sell`. `quote` is the order that block put on the book: a post-only limit order of `TRADE_SIZE_MON` on that side, `QUOTE_INSIDE_TICKS` inside the touch (clamped to the touch when the spread is too tight), in one `batchUpdate` that also cancels everything we had resting (`cancel`). `hold` appears only with `decision.late: true`, when the model missed the block and nothing was posted. When the position cap (or, live, margin funds) blocks a side, the quote goes on the other side with `capped: true` and `probabilities` still show the model's call. `resting` is our size known to be on the book after this block. `upIn10` equals the buy probability.
+Every block the model is asked about the move over `HORIZON_BLOCKS` (default 100, ~30 s) and answers `buy` or `sell`. `quote` is the order that block put on the book: a post-only limit order of `TRADE_SIZE` on that side, `QUOTE_INSIDE_TICKS` inside the touch (clamped to the touch when the spread is too tight), in one `batchUpdate` that also cancels everything we had resting (`cancel`). `hold` appears only with `decision.late: true`, when the model missed the block and nothing was posted. When the position cap (or, live, margin funds) blocks a side, the quote goes on the other side with `capped: true` and `probabilities` still show the model's call. `resting` is our size known to be on the book after this block. `upIn10` equals the buy probability.
 
 Live sends are fired and forgotten, so the `block` event carries the **intent**: `status: "sent"`, `gasMon` is `gasLimit x (last known base fee + priority)`. Monad charges the gas limit, so that is the real cost whether the order lands or not. The receipt arrives a block or two later as its own SSE event:
 

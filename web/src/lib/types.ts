@@ -8,8 +8,8 @@ export interface Decision { action: Action; probabilities: { buy: number; sell: 
 export interface Position { side: "long" | "short" | "flat"; size: number; entryPrice: number | null; unrealizedUsd: number; unrealizedMon: number }
 export interface Totals { blocks: number; decisions: number; quotes: number; fills: number; reverted: number; lateBlocks: number; jevUsd: number; gasMon: number; gasUsd: number; feesUsd?: number; realizedUsd: number; pnlUsd: number; pnlMon: number; pnlPct: number }
 export interface BlockEvent { block: number; ts: number; mid: number; bestBid: number; bestAsk: number; spreadBps: number; decision: Decision | null; quote: Quote | null; fill: Fill | null; resting: { bidMon: number; askMon: number }; position: Position; totals: Totals }
-/** Which exchange the server trades on. Money fields named ...Usd are in `quoteCcy`. */
-export interface VenueInfo { name: "kuru" | "upbit"; label: string; market: string; symbol: string; quoteCcy: string; priceDecimals: number; clock: "block" | "tick"; txUrl: string | null }
+/** Which exchange the server trades on. Money fields named ...Usd are in `quoteCcy`; size fields named ...Mon are in `base`. */
+export interface VenueInfo { name: "kuru" | "upbit"; label: string; market: string; symbol: string; base: string; quoteCcy: string; priceDecimals: number; sizeDecimals: number; clock: "block" | "tick"; txUrl: string | null }
 /** `wallet` is the Kuru wallet address, or an Upbit account label. `venue` is absent on older servers (Kuru). */
 export interface Meta { model: string; wallet: string | null; dryRun: boolean; market: string; venue?: VenueInfo; startedAt: number }
 export type ConnectionState = "connecting" | "live" | "reconnecting";

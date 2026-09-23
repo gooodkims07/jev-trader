@@ -21,14 +21,20 @@ export const config = {
   upbit: {
     accessKey: upbitAccessKey,
     secretKey: upbitSecretKey,
-    market: env("UPBIT_MARKET", "KRW-MON")!, // KRW markets only: the tick table and the 5,000 KRW minimum are KRW rules
+    market: env("UPBIT_MARKET", "KRW-MON")!, // any KRW market (KRW-BTC, KRW-ETH, ...): the tick table and the 5,000 KRW minimum are KRW rules
     /** Charged on every fill, maker included. Used for simulated fills; live fills carry Upbit's own trade_fee. */
     feeRate: Number(env("UPBIT_FEE_RATE", "0.0005")),
     /** Length of one loop step. No chain, so a timer stands in for the block. */
     tickMs: Number(env("UPBIT_TICK_MS", "300")),
   },
-  tradeSizeMon: Number(env("TRADE_SIZE_MON", "200")), // Kuru MON-USDC minimum order is 200 MON
-  maxPositionMon: Number(env("MAX_POSITION_MON", "1000")),
+  /** Order size in the base asset (MON on Kuru; the coin of UPBIT_MARKET on Upbit). TRADE_SIZE_MON still works. */
+  tradeSize: Number(env("TRADE_SIZE", env("TRADE_SIZE_MON", "200"))), // Kuru MON-USDC minimum order is 200 MON
+  maxPosition: Number(env("MAX_POSITION", env("MAX_POSITION_MON", "1000"))),
+  /**
+   * The defaults and the ..._MON settings are MON amounts, so any other coin must set TRADE_SIZE and
+   * MAX_POSITION themselves. Otherwise a .env copied from the example would size a BTC order at 200 BTC.
+   */
+  sizesSetForAnyCoin: !!env("TRADE_SIZE") && !!env("MAX_POSITION"),
   bankrollUsd: Number(env("BANKROLL", env("BANKROLL_USD", "100"))), // used for pnlPct, in the venue's quote currency
   /** Quote this many ticks inside the touch (0 = join the best bid/ask). Never crosses: clamps to the touch when the spread is too tight. */
   quoteInsideTicks: Number(env("QUOTE_INSIDE_TICKS", "1")),

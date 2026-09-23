@@ -21,8 +21,8 @@ function kindOf(event: BlockEvent): Kind {
   return "late";
 }
 
-function fmtSize(size: number): string {
-  return size.toLocaleString("en-US", { maximumFractionDigits: 2 });
+function fmtSize(size: number, decimals = 2): string {
+  return size.toLocaleString("en-US", { maximumFractionDigits: decimals });
 }
 
 const KIND_CLASS: Record<Kind, string> = {
@@ -41,6 +41,7 @@ const WORD: Record<Kind, string> = { buy: "BUY", sell: "SELL", late: "LATE" };
  */
 export default function Feed({ events }: { events: BlockEvent[] }) {
   const venue = useVenue();
+  const sizeDp = Math.max(2, venue.sizeDecimals);
   const listRef = useRef<HTMLDivElement | null>(null);
   // How many whole 26px rows fit in the box the layout gives us. The list
   // itself clips, so a wrong guess is never a half-drawn row, only a hidden one.
@@ -94,10 +95,10 @@ export default function Feed({ events }: { events: BlockEvent[] }) {
             let detail = "";
             let detailMuted = false;
             if (fill && fill.size > 0) {
-              detail = `FILL ${fmtSize(fill.size)} @ ${fmtPrice(fill.price, venue.priceDecimals)}`;
+              detail = `FILL ${fmtSize(fill.size, sizeDp)} @ ${fmtPrice(fill.price, venue.priceDecimals)}`;
             } else if (decided && quote) {
               const word = quote.side === "buy" ? "bid" : "ask";
-              detail = `${word} ${fmtSize(quote.size)} @ ${fmtPrice(quote.price, venue.priceDecimals)}${quote.capped ? " cap" : ""}`;
+              detail = `${word} ${fmtSize(quote.size, sizeDp)} @ ${fmtPrice(quote.price, venue.priceDecimals)}${quote.capped ? " cap" : ""}`;
               detailMuted = quote.status === "reverted" || quote.status === "lost";
             } else if (decided) {
               detail = "no quote";

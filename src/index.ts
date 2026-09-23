@@ -6,10 +6,11 @@ import type { Venue } from "./venue";
 
 const venue: Venue = config.venue === "upbit" ? new (await import("./upbit")).UpbitVenue() : new (await import("./market")).KuruVenue();
 await venue.init();
-const model = createModel(venue.info.name);
+const model = createModel(venue.info);
 const { info } = venue;
 const px = (p: number) => p.toFixed(info.priceDecimals);
-const pxMid = (p: number) => p.toFixed(info.priceDecimals + 1); // a mid can sit half a price unit off the grid
+// On a coarse book a mid can sit half a price unit off the grid: one more decimal, unless prices are whole. Kuru logs as it always has.
+const pxMid = (p: number) => p.toFixed(info.name === "kuru" || info.priceDecimals === 0 ? info.priceDecimals : info.priceDecimals + 1);
 
 const server = startServer(
   { model: model.name, wallet: venue.account, dryRun: !venue.live, market: info.market, venue: info, startedAt: Date.now() },

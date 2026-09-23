@@ -25,7 +25,7 @@ const book = (block: number): Book => ({
 function fakeVenue(): Venue & { trades: FakeTrades; sent: OrderId[][] } {
   const sent: OrderId[][] = [];
   return {
-    info: { name: "upbit", label: "Upbit", market: "KRW-MON", symbol: "MON-KRW", quoteCcy: "KRW", priceDecimals: 1, clock: "tick", txUrl: null },
+    info: { name: "upbit", label: "Upbit", market: "KRW-MON", symbol: "MON-KRW", base: "MON", quoteCcy: "KRW", priceDecimals: 1, sizeDecimals: 1, clock: "tick", txUrl: null },
     account: null, live: false, funds: { mon: 0, quote: 0 }, makerFeeRate: 0.0005,
     trades: new FakeTrades(), sent,
     async init() {}, startClock() {}, async refresh() {},

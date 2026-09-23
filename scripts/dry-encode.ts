@@ -20,7 +20,7 @@ const iface = new ethers.utils.Interface(OrderBookAbi.abi);
 const market = new KuruVenue();
 market.params = await Kuru.ParamFetcher.getMarketParams(provider, config.market);
 const book = await market.readBook();
-const size = config.tradeSizeMon;
+const size = config.tradeSize;
 const priceDec = market.params.pricePrecision.toString().length - 1, sizeDec = market.params.sizePrecision.toString().length - 1;
 const tick = Number(market.params.tickSize.toString());
 console.log(`market ${config.market} · block ${book.block} · bid ${book.bid} ask ${book.ask} · tick ${tick / 10 ** priceDec} · size ${size} MON · ${config.quoteInsideTicks} tick inside`);

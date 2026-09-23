@@ -1,5 +1,5 @@
 /**
- * Upbit KRW market (default KRW-MON) as a Venue.
+ * An Upbit KRW market (UPBIT_MARKET, default KRW-MON; any KRW-<coin> works) as a Venue.
  *
  * There is no chain, so a timer stands in for the block: tick = floor(now / tickMs). Trade prints are
  * stamped with the tick of their exchange timestamp, so "the last 100 blocks" means the last 30 s.
@@ -40,6 +40,12 @@ interface WsMyOrder {
 interface RestTrade { trade_price: number; trade_volume: number; ask_bid: "ASK" | "BID"; timestamp: number; sequential_id: number }
 
 const round = (x: number, d: number) => Math.round(x * 10 ** d) / 10 ** d;
+
+/**
+ * Enough size decimals that the last digit is worth about 1 KRW or less: 2 for MON at ~35 KRW, 8 (Upbit's
+ * limit) for BTC. Never fewer than 1.
+ */
+export const sizeDecimalsFor = (price: number) => Math.min(8, Math.max(1, Math.ceil(Math.log10(Math.max(price, 1)))));
 
 /** Book from levels sorted best first, with the same depth and imbalance rules as the Kuru book. */
 export function bookFromLevels(block: number, bids: [number, number][], asks: [number, number][]): Book {
@@ -88,7 +94,7 @@ class UpbitTrades implements TradeSource {
   }
 
   /**
-   * An order of ours has executed `total` MON so far. Book the part not yet booked as one fill.
+   * An order of ours has executed `total` (base asset) so far. Book the part not yet booked as one fill.
    * `fee` is Upbit's trade_fee when the stream reports it, else estimated at the configured rate.
    */
   recordExecuted(uuid: string, side: Side, price: number, total: number, remaining: number, ts: number, fee: number | null) {
@@ -132,8 +138,8 @@ export class UpbitVenue implements Venue {
     this.base = base;
     this.quoteCcy = quote;
     this.info = {
-      name: "upbit", label: "Upbit", market: this.market, symbol: `${base}-${quote}`, quoteCcy: quote,
-      priceDecimals: 1, clock: "tick", txUrl: null,
+      name: "upbit", label: "Upbit", market: this.market, symbol: `${base}-${quote}`, base, quoteCcy: quote,
+      priceDecimals: 1, sizeDecimals: 1, clock: "tick", txUrl: null,
     };
     this.trades = new UpbitTrades((ms) => this.tickOf(ms));
   }
@@ -144,10 +150,14 @@ export class UpbitVenue implements Venue {
   tickOf(ms: number) { return Math.floor(ms / config.upbit.tickMs); }
 
   async init() {
+    if (this.base !== "MON" && !config.sizesSetForAnyCoin) throw new Error(`TRADE_SIZE_MON, MAX_POSITION_MON and the defaults are MON amounts. Set TRADE_SIZE and MAX_POSITION in ${this.base} for ${this.market}.`);
     const book = await this.restBook();
     this.info.priceDecimals = tickDecimals(krwTick(book.bid));
-    const minMon = KRW_MIN_ORDER / book.bid;
-    if (config.tradeSizeMon < minMon) throw new Error(`TRADE_SIZE_MON ${config.tradeSizeMon} is under Upbit's ${KRW_MIN_ORDER} KRW minimum (${Math.ceil(minMon)} ${this.base} at ${book.bid})`);
+    this.info.sizeDecimals = sizeDecimalsFor(book.mid);
+    const minSize = KRW_MIN_ORDER / book.bid;
+    const notional = config.tradeSize * book.mid;
+    if (config.tradeSize < minSize) throw new Error(`TRADE_SIZE ${config.tradeSize} ${this.base} is under Upbit's ${KRW_MIN_ORDER} KRW minimum (${minSize.toPrecision(3)} ${this.base} at ${book.bid} KRW)`);
+    console.log(`upbit ${this.market} · ${config.tradeSize} ${this.base} per order ≈ ${Math.round(notional).toLocaleString("en-US")} KRW · price unit ${krwTick(book.bid)} KRW`);
     await this.warmupTrades();
     this.connectPublic();
     if (!this.live) return;

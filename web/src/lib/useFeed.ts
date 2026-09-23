@@ -198,8 +198,10 @@ function parseVenue(raw: unknown): VenueInfo | undefined {
     label: str(v.label, v.name),
     market: str(v.market, ""),
     symbol: str(v.symbol, "MON-USDC"),
+    base: str(v.base, "MON"),
     quoteCcy: str(v.quoteCcy, "USDC"),
     priceDecimals: typeof v.priceDecimals === "number" ? v.priceDecimals : 6,
+    sizeDecimals: typeof v.sizeDecimals === "number" ? v.sizeDecimals : 1,
     clock: v.clock === "tick" ? "tick" : "block",
     txUrl: typeof v.txUrl === "string" ? v.txUrl : null,
   };

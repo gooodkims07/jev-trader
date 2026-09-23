@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test";
 import { createHash, createHmac } from "node:crypto";
 import { krwTick, queryString, signJwt, tickDecimals } from "./upbit-api";
-import { UpbitVenue, bookFromLevels } from "./upbit";
+import { UpbitVenue, bookFromLevels, sizeDecimalsFor } from "./upbit";
+import { questions } from "./model";
+import type { VenueInfo } from "./venue";
 
 test("krwTick follows the KRW price unit table at range edges", () => {
   expect(krwTick(34.9)).toBe(0.1);
@@ -55,4 +57,28 @@ test("quotePrice steps one price unit inside the touch and never crosses", () =>
   const edge = bookFromLevels(1, [[9.9, 1]], [[10.0, 1]]);
   expect(v.quotePrice("sell", edge)).toBe(9.99);
   expect(v.quotePrice("buy", edge)).toBe(9.91);
+});
+
+test("sizeDecimalsFor: the last size digit is worth about 1 KRW, between 1 and 8 decimals", () => {
+  expect(sizeDecimalsFor(34.9)).toBe(2);
+  expect(sizeDecimalsFor(3_000)).toBe(4);
+  expect(sizeDecimalsFor(150_000_000)).toBe(8);
+  expect(sizeDecimalsFor(0.5)).toBe(1);
+});
+
+test("Jev's question names the traded coin; Kuru keeps MON", () => {
+  const kuru: VenueInfo = { name: "kuru", label: "Kuru", market: "", symbol: "MON-USDC", base: "MON", quoteCcy: "USDC", priceDecimals: 6, sizeDecimals: 1, clock: "block", txUrl: null };
+  const k = questions(kuru).direction;
+  expect(k.instructions.question).toContain("Will MON be higher");
+  expect(k.instructions.goal).toStartWith("Make markets on MON-USDC on Kuru.");
+  expect(k.instructions.inputs).not.toContain("are in");
+
+  const btc = questions({ ...kuru, name: "upbit", label: "Upbit", symbol: "BTC-KRW", base: "BTC", quoteCcy: "KRW" }).direction;
+  expect(btc.instructions.question).toBe("Will BTC be higher or lower than the current mid after `horizonBlocks` more blocks?");
+  expect(btc.instructions.goal).toStartWith("Make markets on BTC-KRW on Upbit.");
+  expect(btc.criteria.buy).toContain("long BTC");
+  expect(btc.criteria.sell).toContain("short BTC");
+  expect(btc.instructions.inputs).toContain("`trades.cvdMon`"); // field names stay; a line says they are in BTC
+  expect(btc.instructions.inputs).toEndWith("Sizes and every field ending in `Mon` are in BTC.");
+  expect(JSON.stringify(btc)).not.toMatch(/\bMON\b/);
 });

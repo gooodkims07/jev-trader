@@ -22,9 +22,9 @@ export function fmtUsd(n: number | null | undefined, d = 4): string {
   return `${v < 0 ? "-" : ""}$${Math.abs(v).toFixed(d)}`;
 }
 
-/** 0.0213 -> "0.021 MON" */
-export function fmtMon(n: number | null | undefined, d = 3): string {
-  return `${safe(n).toFixed(d)} MON`;
+/** 0.0213 -> "0.021 MON". `unit` is the venue's base asset. */
+export function fmtMon(n: number | null | undefined, d = 3, unit = "MON"): string {
+  return `${safe(n).toFixed(d)} ${unit}`;
 }
 
 /** 0.62 -> "62%" */
@@ -44,8 +44,8 @@ export function fmtSigned(n: number | null | undefined, d = 3): string {
 }
 
 /** -0.0012 -> "-0.001 MON"; 0.003 -> "+0.003 MON" */
-export function fmtSignedMon(n: number | null | undefined, d = 3): string {
-  return `${fmtSigned(n, d)} MON`;
+export function fmtSignedMon(n: number | null | undefined, d = 3, unit = "MON"): string {
+  return `${fmtSigned(n, d)} ${unit}`;
 }
 
 /** 0.0012 (a ratio) -> "+0.12%" */

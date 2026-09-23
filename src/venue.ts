@@ -3,7 +3,8 @@
  * specific to one exchange (Kuru on Monad, Upbit) lives behind it.
  *
  * Time is counted in "blocks": Monad blocks on Kuru, 300 ms clock ticks on Upbit. Money fields named
- * `...Usd` elsewhere are in the venue's quote currency (`quoteCcy`: USDC on Kuru, KRW on Upbit).
+ * `...Usd` elsewhere are in the venue's quote currency (`quoteCcy`: USDC on Kuru, KRW on Upbit), and
+ * size fields named `...Mon` are in the base asset (`base`: MON on Kuru, whatever UPBIT_MARKET trades).
  */
 
 export type Side = "buy" | "sell";
@@ -21,7 +22,7 @@ export interface Book {
   imbalance: number;
   /** Top 5 levels each side, best first: [price, size]. */
   levels: { bids: [number, number][]; asks: [number, number][] };
-  /** Cumulative MON depth within N bps of mid, per side. */
+  /** Cumulative base-asset depth within N bps of mid, per side. */
   depthBps: { [band: string]: { bid: number; ask: number } };
 }
 
@@ -32,8 +33,8 @@ export interface Book {
  */
 export interface Quote {
   side: Side;
-  price: number; // quote currency per MON, tick aligned
-  size: number; // MON
+  price: number; // quote currency per base unit, tick aligned
+  size: number; // base asset
   /** Kuru: the transaction. Upbit: always null (no chain). */
   txHash: string | null;
   /** The venue's handle for this send until it resolves: tx hash on Kuru, client order identifier on Upbit. */
@@ -49,7 +50,7 @@ export interface Quote {
 /** A maker fill: someone hit one of our resting orders. */
 export interface Fill {
   side: Side;
-  size: number; // MON
+  size: number; // base asset
   price: number; // our order's price
   txHash: string | null; // Kuru: the taker's transaction
   orderId: OrderId;
@@ -70,7 +71,7 @@ export interface TradeSummary {
   count: number;
   buyMon: number;
   sellMon: number;
-  /** taker buy volume minus taker sell volume (MON) */
+  /** taker buy volume minus taker sell volume (base asset) */
   cvdMon: number;
   vwap: number | null;
   lastPrice: number | null;
@@ -99,9 +100,13 @@ export interface VenueInfo {
   market: string;
   /** "MON-USDC", "MON-KRW": base first. */
   symbol: string;
+  /** The asset traded: "MON", "BTC". Sizes are in this. */
+  base: string;
   quoteCcy: string;
   /** Decimals to show prices with. */
   priceDecimals: number;
+  /** Decimals to show sizes with: 1 for MON, more for assets where one unit is worth a lot. */
+  sizeDecimals: number;
   /** What one step of the loop is called: "block" (Monad) or "tick" (a 300 ms timer). */
   clock: "block" | "tick";
   /** Explorer URL prefix for tx hashes, or null when there is no chain. */

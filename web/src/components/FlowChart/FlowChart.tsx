@@ -176,7 +176,7 @@ export default function FlowChart({
       ty,
       block: `#${e.block}`,
       price: fmtPrice(e.mid, venue.midDecimals),
-      trade: side ? `FILL ${side} ${fmtMon(e.fill!.size, 0)}` : quoteText,
+      trade: side ? `FILL ${side} ${venue.name === "kuru" ? fmtMon(e.fill!.size, 0) : fmtMon(e.fill!.size, venue.sizeDecimals, venue.base)}` : quoteText,
       tint: e.fill ? (e.fill.side === "buy" ? "var(--buy-ink)" : "var(--sell-ink)") : q ? (q.side === "buy" ? "var(--buy-ink)" : "var(--sell-ink)") : "var(--muted)",
       lat: e.decision && !e.decision.late ? `${Math.round(e.decision.latencyMs)} ms` : "late",
     };
@@ -203,9 +203,14 @@ export default function FlowChart({
   const stance =
     !pos || pos.side === "flat"
       ? "flat"
-      : `${pos.side} ${fmtMon(pos.size, Number.isInteger(pos.size) ? 0 : 3)}`;
+      : `${pos.side} ${fmtMon(pos.size, Number.isInteger(pos.size) ? 0 : Math.max(3, venue.sizeDecimals), venue.base)}`;
   const pnlMon = shown?.totals?.pnlMon ?? 0;
   const pnlPct = shown?.totals?.pnlPct ?? 0;
+  // Kuru shows P&L in MON, as it always has. Elsewhere one base unit can be worth a lot (BTC), so show
+  // it in the quote currency instead.
+  const pnlQuote = shown?.totals?.pnlUsd ?? 0;
+  const pnlText = venue.name === "kuru" ? fmtSignedMon(pnlMon, 3) : `${fmtSigned(pnlQuote, venue.quoteCcy === "KRW" ? 1 : 4)} ${venue.quoteCcy}`;
+  const pnlSign = venue.name === "kuru" ? pnlMon : pnlQuote;
 
   return (
     <div className={styles.wrap}>
@@ -336,8 +341,8 @@ export default function FlowChart({
                 <span>{venue.pair}</span>
                 <span>{venue.label}</span>
                 <span>{stance}</span>
-                <span style={{ color: pnlMon >= 0 ? "var(--pnl-pos)" : "var(--pnl-neg)" }}>
-                  p&amp;l {fmtSignedMon(pnlMon, 3)} ({fmtSigned(pnlPct, 2)}%)
+                <span style={{ color: pnlSign >= 0 ? "var(--pnl-pos)" : "var(--pnl-neg)" }}>
+                  p&amp;l {pnlText} ({fmtSigned(pnlPct, 2)}%)
                 </span>
               </div>
             </div>
