@@ -25,7 +25,7 @@ const book = (block: number): Book => ({
 function fakeVenue(price = 34.9): Venue & { trades: FakeTrades; sent: OrderId[][] } {
   const sent: OrderId[][] = [];
   return {
-    info: { name: "okx", label: "OKX", market: "MON-USDT-SWAP", symbol: "MON-USDT PERP", base: "MON", quoteCcy: "USDT", priceDecimals: 1, sizeDecimals: 1, clock: "tick", txUrl: null },
+    info: { name: "okx", label: "OKX", market: "MON-USDT-SWAP", symbol: "MON-USDT PERP", base: "MON", quoteCcy: "USDT", priceDecimals: 1, sizeDecimals: 1, clock: "tick", blockMs: 300, txUrl: null },
     account: null, live: false, canAfford: () => true, makerFeeRate: 0.0005,
     trades: new FakeTrades(), sent,
     async init() {}, startClock() {}, async refresh() {},

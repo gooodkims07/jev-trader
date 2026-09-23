@@ -25,6 +25,8 @@ const SOCKET_QUIET_MS = 10_000;
 /** OKX drops a socket after 30 s of silence; "ping" keeps a quiet one alive and counts as liveness. */
 const PING_MS = 5_000;
 const CL_PREFIX = "jev";
+/** Stop after this many refused orders in a row. */
+const MAX_REJECTS = 20;
 
 interface Instrument { instId: string; ctVal: string; ctValCcy: string; lotSz: string; minSz: string; tickSz: string; settleCcy: string; state: string }
 /** [price, size in contracts, deprecated "0", number of orders] */
@@ -99,6 +101,9 @@ export class OkxVenue implements Venue {
   private availUsdt = 0;
   private posContracts = 0;
   private done: QuoteResult[] = [];
+  /** Orders OKX refused in a row (not rate limits or outages). */
+  private rejectStreak = 0;
+  private halted = false;
 
   constructor() {
     const [base, quote, kind] = this.instId.split("-");
@@ -106,7 +111,7 @@ export class OkxVenue implements Venue {
     this.base = base;
     this.info = {
       name: "okx", label: "OKX", market: this.instId, symbol: `${base}-USDT PERP`, base, quoteCcy: "USDT",
-      priceDecimals: 5, sizeDecimals: 0, clock: "tick", txUrl: null,
+      priceDecimals: 5, sizeDecimals: 0, clock: "tick", blockMs: config.okx.tickMs, txUrl: null,
     };
     this.trades = new OkxTrades((ms) => this.tickOf(ms));
   }
@@ -208,6 +213,7 @@ export class OkxVenue implements Venue {
   async send(block: number, side: Side, sizeMon: number, book: Book, cancel: OrderId[], capped: boolean): Promise<Quote> {
     const price = this.quotePrice(side, book);
     if (!this.live) return { side, price, size: sizeMon, txHash: null, ref: null, gasMon: 0, cancel, status: "sim", orderId: null, capped };
+    if (this.halted) throw new Error("okx: halted after repeated order rejections");
     const ref = newClOrdId();
     const quote: Quote = { side, price, size: sizeMon, txHash: null, ref, gasMon: 0, cancel, status: "sent", orderId: null, capped };
     this.replace(block, quote).then((r) => this.done.push(r));
@@ -246,12 +252,28 @@ export class OkxVenue implements Venue {
       });
       // A post-only order that would cross is accepted, then cancelled by OKX (cancelSource 31). It shows
       // as placed here; the next block's cancel finds it gone (51400) and drops it.
+      this.rejectStreak = 0;
       return { block, quote: { ...quote, status: "placed", orderId: r!.ordId }, canceled };
     } catch (e) {
       const err = e instanceof OkxError ? e : new OkxError(0, "error", (e as Error).message);
       console.warn(`okx order: ${err.message}`);
+      if (!err.transient) this.rejectFailure(err);
       return { block, quote: { ...quote, status: err.transient ? "lost" : "reverted" }, canceled };
     }
+  }
+
+  /**
+   * Stop instead of sending the same refused order every tick: at once on an auth or permission refusal
+   * (HTTP 401, codes 501xx), otherwise after MAX_REJECTS in a row. SIGINT runs the normal shutdown, which
+   * cancels our orders and reports any position.
+   */
+  private rejectFailure(err: OkxError) {
+    this.rejectStreak++;
+    const fatal = err.status === 401 || err.code.startsWith("501");
+    if (this.halted || (!fatal && this.rejectStreak < MAX_REJECTS)) return;
+    this.halted = true;
+    console.error(`okx: stopping. ${fatal ? "OKX refused the key for trading" : `${this.rejectStreak} orders refused in a row`}: ${err.message}`);
+    process.kill(process.pid, "SIGINT");
   }
 
   private async readFee() {

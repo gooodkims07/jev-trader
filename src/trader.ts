@@ -241,7 +241,7 @@ export class Trader {
       market: this.venue.info.symbol,
       block,
       horizonBlocks: H,
-      blockMs: 300,
+      blockMs: this.venue.info.blockMs,
       mid: book.mid,
       spreadBps: round(book.spreadBps, 2),
       bookImbalance: round(book.imbalance, 3),

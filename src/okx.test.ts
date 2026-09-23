@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { newClOrdId, sign, stepDecimals } from "./okx-api";
+import { OkxError, newClOrdId, sign, stepDecimals } from "./okx-api";
 import { OkxVenue } from "./okx";
 import { questions } from "./model";
 import { bookFromLevels, type VenueInfo } from "./venue";
@@ -53,10 +53,47 @@ test("quotePrice: one tick inside, never crossing, join the touch when one tick 
 });
 
 test("Jev's OKX question is about the perpetual; Kuru's is unchanged", () => {
-  const okx: VenueInfo = { name: "okx", label: "OKX", market: "MON-USDT-SWAP", symbol: "MON-USDT PERP", base: "MON", quoteCcy: "USDT", priceDecimals: 5, sizeDecimals: 0, clock: "tick", txUrl: null };
+  const okx: VenueInfo = { name: "okx", label: "OKX", market: "MON-USDT-SWAP", symbol: "MON-USDT PERP", base: "MON", quoteCcy: "USDT", priceDecimals: 5, sizeDecimals: 0, clock: "tick", blockMs: 300, txUrl: null };
   const q = questions(okx).direction;
   expect(q.instructions.goal).toStartWith("Make markets on the MON-USDT perpetual swap on OKX.");
   expect(q.instructions.goal).toContain("being short is as easy as being long");
+  expect(q.instructions.goal).toContain("Each block here is a 300 ms tick; `horizonBlocks` (~30 s)");
+  // A 1 s tick is described as such; the horizon follows HORIZON_BLOCKS x tick.
+  expect(questions({ ...okx, blockMs: 1000 }).direction.instructions.goal).toContain("Each block here is a 1 s tick; `horizonBlocks` (~100 s)");
   const kuru = questions({ ...okx, name: "kuru", label: "Kuru", symbol: "MON-USDC", quoteCcy: "USDC" }).direction;
   expect(kuru.instructions.goal).toStartWith("Make markets on MON-USDC on Kuru.");
+});
+
+test("stops at once when OKX refuses the key for trading, not on outages", () => {
+  const kills: string[] = [];
+  const realKill = process.kill;
+  (process as any).kill = (_pid: number, sig: string) => { kills.push(sig); return true; };
+  try {
+    const v = new OkxVenue() as any;
+    v.rejectFailure(new OkxError(0, "network", "timeout")); // transient errors never reach here in replace(), but must not halt
+    expect(v.halted).toBe(false);
+    v.rejectFailure(new OkxError(401, "50123", "This API Key does not have trading permission"));
+    expect(v.halted).toBe(true);
+    expect(kills).toEqual(["SIGINT"]);
+    v.rejectFailure(new OkxError(401, "50123", "again"));
+    expect(kills).toEqual(["SIGINT"]); // only once
+  } finally {
+    (process as any).kill = realKill;
+  }
+});
+
+test("other refusals stop the bot after 20 in a row", () => {
+  const kills: string[] = [];
+  const realKill = process.kill;
+  (process as any).kill = (_pid: number, sig: string) => { kills.push(sig); return true; };
+  try {
+    const v = new OkxVenue() as any;
+    for (let i = 0; i < 19; i++) v.rejectFailure(new OkxError(200, "51008", "Insufficient USDT margin"));
+    expect(v.halted).toBe(false);
+    v.rejectFailure(new OkxError(200, "51008", "Insufficient USDT margin"));
+    expect(v.halted).toBe(true);
+    expect(kills).toEqual(["SIGINT"]);
+  } finally {
+    (process as any).kill = realKill;
+  }
 });

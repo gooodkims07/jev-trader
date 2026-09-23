@@ -26,7 +26,7 @@ interface Pending { block: number; quote: Quote; gasLimit: ethers.BigNumber }
 export class KuruVenue implements Venue {
   readonly info: VenueInfo = {
     name: "kuru", label: "Kuru", market: config.market, symbol: "MON-USDC", base: "MON", quoteCcy: "USDC",
-    priceDecimals: 6, sizeDecimals: 1, clock: "block", txUrl: "https://monadvision.com/tx/",
+    priceDecimals: 6, sizeDecimals: 1, clock: "block", blockMs: 300, txUrl: "https://monadvision.com/tx/",
   };
   readonly makerFeeRate = 0;
   readonly provider = new ethers.providers.StaticJsonRpcProvider(config.rpcUrl, config.chainId);

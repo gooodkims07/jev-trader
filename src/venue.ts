@@ -108,8 +108,10 @@ export interface VenueInfo {
   priceDecimals: number;
   /** Decimals to show sizes with: 1 for MON, more for assets where one unit is worth a lot. */
   sizeDecimals: number;
-  /** What one step of the loop is called: "block" (Monad) or "tick" (a 300 ms timer). */
+  /** What one step of the loop is called: "block" (Monad) or "tick" (a timer). */
   clock: "block" | "tick";
+  /** Length of one step: ~300 ms Monad blocks, or OKX_TICK_MS. */
+  blockMs: number;
   /** Explorer URL prefix for tx hashes, or null when there is no chain. */
   txUrl: string | null;
 }
