@@ -1,4 +1,5 @@
-const env = (key: string, fallback?: string) => process.env[key] ?? fallback;
+/** An empty value (KEY= in .env) counts as unset, so a blank line from the example never becomes 0. */
+const env = (key: string, fallback?: string) => process.env[key] || fallback;
 const num = (key: string) => (env(key) ? Number(env(key)) : undefined);
 
 const venue = env("VENUE", "kuru") as "kuru" | "okx";
@@ -63,6 +64,8 @@ export const config = {
   pendingBlocks: 10, // give up on a tx with no receipt after this many blocks
   refreshBlocks: 200, // how often to refresh the fee estimate, margin balances and the vault check
   horizonBlocks: Number(env("HORIZON_BLOCKS", "100")), // the model is asked about the move over this many blocks (~30 s)
+  /** How far back the model's inputs look (taker flow, sampled mids). Defaults to the horizon, as on Kuru. */
+  lookbackBlocks: Number(env("LOOKBACK_BLOCKS", env("HORIZON_BLOCKS", "100"))),
   model: env("MODEL", "mock") as "mock" | "jev",
   jevModelId: env("JEV_MODEL_ID", "jev-latest")!,
   jevUsdPerMTok: 0.042,

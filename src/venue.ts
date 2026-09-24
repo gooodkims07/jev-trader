@@ -156,6 +156,10 @@ export interface Venue {
    * size in the base asset, average entry). Optional; OKX places its emergency stop here.
    */
   protect?(position: { mon: number; entry: number | null }): void;
+  /** Take these resting orders off the book without placing one (the model chose to skip). Resolves to the ids gone. */
+  cancel?(ids: OrderId[]): Promise<OrderId[]>;
+  /** Market facts the model sees beyond the book. OKX: the swap's current funding rate. */
+  extras?(): { fundingRatePct: number | null };
   /** On SIGINT/SIGTERM: take our orders off the book. Optional; Kuru leaves the last order resting as before. */
   shutdown?(): Promise<void>;
 }

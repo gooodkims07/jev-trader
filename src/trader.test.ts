@@ -193,3 +193,40 @@ test("session stop: close the position, then halt once flat", () =>
     await trader.onBlock(55); // halted: nothing more
     expect(events.length).toBe(n);
   }));
+
+const skipper: Model = { name: "skipper", async decide() { return { action: "hold", probabilities: { buy: 0.2, sell: 0.2, hold: 0.6 }, upIn10: 0.2, latencyMs: 1, inputTokens: 100 }; } };
+
+test("skip: nothing is posted, our resting order comes off, and the tick counts as a skip", async () => {
+  const venue = fakeVenue(34.9);
+  const events: BlockEvent[] = [];
+  let model: Model = buyer;
+  const trader = new Trader(venue, { name: "switch", decide: (s) => model.decide(s) }, (e) => events.push(e));
+  await trader.onBlock(60);
+  expect(events.at(-1)!.resting.bidMon).toBe(200);
+
+  model = skipper;
+  await trader.onBlock(61);
+  const e = events.at(-1)!;
+  expect(e.quote).toBeNull();
+  expect(e.decision!.action).toBe("hold");
+  expect(e.decision!.late).toBe(false);
+  expect(e.resting.bidMon).toBe(0);
+  expect(e.totals.skips).toBe(1);
+
+  // A print that would have hit the old bid fills nothing now.
+  print(venue, { block: 62, price: 34.9, size: 500, side: "sell" });
+  await trader.onBlock(62);
+  await Bun.sleep(0);
+  expect(events.at(-1)!.position.side).toBe("flat");
+});
+
+test("OKX state carries lookback, position and costs; the question horizon stays separate", async () => {
+  const venue = fakeVenue(34.9);
+  let seen: any = null;
+  const trader = new Trader(venue, { name: "spy", async decide(s) { seen = s; return buyer.decide(s); } }, () => {});
+  await trader.onBlock(70);
+  expect(seen.horizonBlocks).toBe(config.horizonBlocks);
+  expect(seen.lookbackBlocks).toBe(config.lookbackBlocks);
+  expect(seen.position).toEqual({ side: "flat", sizeMon: 0, entry: null, unrealizedBps: 0, capMon: config.maxPosition });
+  expect(seen.costs.makerFeeBps).toBe(5); // fake venue: 0.0005
+});

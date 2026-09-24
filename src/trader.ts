@@ -33,6 +33,8 @@ export interface Totals {
   fills: number;
   reverted: number;
   lateBlocks: number;
+  /** Ticks where the model chose to skip (OKX): nothing posted, our order taken off the book. */
+  skips: number;
   jevUsd: number;
   gasMon: number;
   gasUsd: number;
@@ -76,7 +78,7 @@ export class Trader {
   private halted = false;
   /** Called once when a session stop or take-profit has closed the position: the bot should shut down. */
   onHalt: (reason: CloseReason) => void = () => {};
-  private totals: Totals = { blocks: 0, decisions: 0, quotes: 0, fills: 0, reverted: 0, lateBlocks: 0, jevUsd: 0, gasMon: 0, gasUsd: 0, feesUsd: 0, realizedUsd: 0, pnlUsd: 0, pnlMon: 0, pnlPct: 0 };
+  private totals: Totals = { blocks: 0, decisions: 0, quotes: 0, fills: 0, reverted: 0, lateBlocks: 0, skips: 0, jevUsd: 0, gasMon: 0, gasUsd: 0, feesUsd: 0, realizedUsd: 0, pnlUsd: 0, pnlMon: 0, pnlPct: 0 };
 
   constructor(
     private venue: Venue,
@@ -118,12 +120,13 @@ export class Trader {
       }
 
       const decision = await this.model.decide(this.buildState(block, book));
+      const skip = decision.action === "hold";
       const wanted: Side = decision.action === "sell" ? "sell" : "buy";
       const other: Side = wanted === "buy" ? "sell" : "buy";
       // While closing, the side is the one that shrinks the position. Otherwise the position cap (and, live,
       // funds) can only pick the reducing side. The probabilities still show the model's call either way.
       const closeSide: Side | null = this.closing && this.position.mon !== 0 ? (this.position.mon > 0 ? "sell" : "buy") : null;
-      const side: Side | null = closeSide ?? (this.allowed(wanted, book) ? wanted : this.allowed(other, book) ? other : null);
+      const side: Side | null = closeSide ?? (skip ? null : this.allowed(wanted, book) ? wanted : this.allowed(other, book) ? other : null);
       this.totals.decisions++;
       this.totals.jevUsd += (decision.inputTokens / 1e6) * config.jevUsdPerMTok;
 
@@ -141,6 +144,10 @@ export class Trader {
         } else if (quote.ref) {
           this.inflight.set(quote.ref, quote);
         }
+      } else if (skip) {
+        // The model skipped: take what we have off the book. A stop that is closing never skips (closeSide wins).
+        this.totals.skips++;
+        this.cancelResting();
       }
       this.emit(block, book, decision, quote, false, { readMs: Math.round(readMs), loopMs: Math.round(performance.now() - t0) });
     } catch (e) {
@@ -148,6 +155,14 @@ export class Trader {
     } finally {
       this.busy = false;
     }
+  }
+
+  /** Cancel our resting orders without placing a new one. Simulated orders just go; live ones go once the venue confirms. */
+  private cancelResting() {
+    for (const id of [...this.orders.keys()]) if (!isReal(id)) this.orders.delete(id);
+    const real = [...this.orders.keys()];
+    if (!real.length || !this.venue.cancel) return;
+    this.venue.cancel(real).then((gone) => { for (const id of gone) this.orders.delete(id); }).catch(() => {});
   }
 
   /** Confirmations for earlier sends, in parallel with this block's decision. */
@@ -287,9 +302,9 @@ export class Trader {
   }
 
   private buildState(block: number, book: Book): TradeState {
-    const m = this.mids, n = m.length, H = config.horizonBlocks;
+    const m = this.mids, n = m.length, H = config.horizonBlocks, L = config.lookbackBlocks;
     const ret = (k: number) => (n > k ? ((m[n - 1]! - m[n - 1 - k]!) / m[n - 1 - k]!) * 10_000 : 0);
-    const sampled = m.slice(-H).filter((_, i, a) => (a.length - 1 - i) % 5 === 0); // every 5th block, newest included
+    const sampled = m.slice(-L).filter((_, i, a) => (a.length - 1 - i) % 5 === 0); // every 5th block, newest included
     const { priceDecimals: pd, sizeDecimals: sd } = this.venue.info;
     const lvl = (l: [number, number]) => `${l[0].toFixed(pd)} x ${round(l[1], sd)}`;
     const depth: TradeState["depth"] = {};
@@ -306,9 +321,21 @@ export class Trader {
       book: { bids: book.levels.bids.map(lvl), asks: book.levels.asks.map(lvl) },
       returnsBps: { last1: round(ret(1), 2), last5: round(ret(5), 2), last20: round(ret(20), 2), last100: round(ret(100), 2) },
       recentMids: sampled.map((x) => x.toFixed(pd + (this.venue.info.name === "kuru" ? 0 : 1))).join(" "),
-      trades: this.venue.trades.summary(H, block),
+      trades: this.venue.trades.summary(L, block),
       recentTrades: this.venue.trades.recent(10).map((t) => `${t.block} ${t.side} ${round(t.size, sd)} @ ${t.price.toFixed(pd)}`),
       allowed: { buy: this.allowed("buy", book), sell: this.allowed("sell", book) },
+      ...(this.venue.info.name === "okx" ? this.okxState(book, L) : {}),
+    };
+  }
+
+  /** OKX only: the lookback, our position, and what a fill costs. Kuru's state stays as it was. */
+  private okxState(book: Book, L: number): Pick<TradeState, "lookbackBlocks" | "position" | "costs"> {
+    const p = this.position.mon, entry = this.entryPrice();
+    const upl = entry ? ((book.mid - entry) / entry) * 10_000 * Math.sign(p) : 0;
+    return {
+      lookbackBlocks: L,
+      position: { side: p > 0 ? "long" : p < 0 ? "short" : "flat", sizeMon: round(Math.abs(p), this.venue.info.sizeDecimals), entry, unrealizedBps: round(upl, 2), capMon: config.maxPosition },
+      costs: { makerFeeBps: round(this.venue.makerFeeRate * 10_000, 2), fundingRatePct: this.venue.extras?.().fundingRatePct ?? null },
     };
   }
 

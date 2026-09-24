@@ -24,7 +24,7 @@ const trader = new Trader(
     if (e.decision && !e.decision.late) {
       const p = e.decision.probabilities;
       const q = e.quote;
-      const quote = !q ? " NO QUOTE (cap or funds on both sides)" : ` ${q.side.toUpperCase()} ${q.size} @ ${px(q.price)}${q.close ? ` close(${q.close})` : q.capped ? " capped" : ""}${q.status === "sim" ? " (sim)" : ` cancel ${q.cancel.length} ${q.txHash ?? q.ref}`}`;
+      const quote = !q && e.decision.action === "hold" ? ` SKIP h${(p.hold * 100).toFixed(0)}` : !q ? " NO QUOTE (cap or funds on both sides)" : ` ${q.side.toUpperCase()} ${q.size} @ ${px(q.price)}${q.close ? ` close(${q.close})` : q.capped ? " capped" : ""}${q.status === "sim" ? " (sim)" : ` cancel ${q.cancel.length} ${q.txHash ?? q.ref}`}`;
       console.log(`#${e.block} ${pxMid(e.mid)} b${(p.buy * 100).toFixed(0)} s${(p.sell * 100).toFixed(0)} ${e.decision.latencyMs}ms${quote} pnl ${e.totals.pnlUsd} ${info.quoteCcy}${t ? ` · read ${t.readMs}ms loop ${t.loopMs}ms` : ""}`);
     }
   },

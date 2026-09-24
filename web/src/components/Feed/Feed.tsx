@@ -11,14 +11,14 @@ const ROW_H = 26;
 /** Hard ceiling, so a very tall viewport does not render an absurd list. */
 const MAX_ROWS = 40;
 
-type Kind = "buy" | "sell" | "late";
+type Kind = "buy" | "sell" | "skip" | "late";
 
 function kindOf(event: BlockEvent): Kind {
   const d = event.decision;
   if (!d || d.late) return "late";
   if (d.action === "buy") return "buy";
   if (d.action === "sell") return "sell";
-  return "late";
+  return "skip"; // a decided hold: the model chose not to post (OKX)
 }
 
 function fmtSize(size: number, decimals = 2): string {
@@ -28,10 +28,11 @@ function fmtSize(size: number, decimals = 2): string {
 const KIND_CLASS: Record<Kind, string> = {
   buy: styles.kindBuy,
   sell: styles.kindSell,
+  skip: styles.kindSkip,
   late: styles.kindLate,
 };
 
-const WORD: Record<Kind, string> = { buy: "BUY", sell: "SELL", late: "LATE" };
+const WORD: Record<Kind, string> = { buy: "BUY", sell: "SELL", skip: "SKIP", late: "LATE" };
 
 /**
  * One row per block. The word is the side the model picked, the detail is the order that went on
@@ -100,6 +101,9 @@ export default function Feed({ events }: { events: BlockEvent[] }) {
               const word = quote.side === "buy" ? "bid" : "ask";
               detail = `${word} ${fmtSize(quote.size, sizeDp)} @ ${fmtPrice(quote.price, venue.priceDecimals)}${quote.close ? " close" : quote.capped ? " cap" : ""}`;
               detailMuted = quote.status === "reverted" || quote.status === "lost";
+            } else if (kind === "skip") {
+              detail = "no order";
+              detailMuted = true;
             } else if (decided) {
               detail = "no quote";
               detailMuted = true;

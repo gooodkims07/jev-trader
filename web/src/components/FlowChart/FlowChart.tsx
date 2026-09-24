@@ -187,7 +187,7 @@ export default function FlowChart({
   const late = d?.late === true;
   const act = late ? "late" : (d?.action ?? "hold");
   const word =
-    act === "buy" ? "Buying" : act === "sell" ? "Selling" : act === "late" ? `Missed the ${venue.clock}` : "Holding";
+    act === "buy" ? "Buying" : act === "sell" ? "Selling" : act === "late" ? `Missed the ${venue.clock}` : venue.name === "kuru" ? "Holding" : "Skipping";
   const wordColor =
     act === "buy"
       ? "var(--buy-ink)"

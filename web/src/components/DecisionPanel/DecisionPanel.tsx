@@ -59,23 +59,31 @@ export default function DecisionPanel({ latest }: DecisionPanelProps) {
       : null;
 
   const probs = decision?.probabilities ?? { buy: 0, sell: 0, hold: 0 };
-  const decided = decision !== null && !late && chosen !== null;
+  // A decided hold is the model skipping this tick (OKX): no order, not a missed tick.
+  const skipped = decision !== null && !late && decision.action === "hold";
+  const decided = decision !== null && !late && (chosen !== null || skipped);
   const pctOf = (p: number) => (decided ? fmtPct(p) : "-");
 
-  const headline = chosen ? (chosen === "buy" ? "BUY" : "SELL") : "LATE";
+  const headline = chosen ? (chosen === "buy" ? "BUY" : "SELL") : skipped ? "SKIP" : "LATE";
   const headlineColor = chosen
     ? chosen === "buy"
       ? "var(--buy-ink)"
       : "var(--sell-ink)"
-    : "var(--late-ink)";
-  const headlinePct = chosen ? fmtPct(probs[chosen]) : "";
+    : skipped
+      ? "var(--muted)"
+      : "var(--late-ink)";
+  const headlinePct = chosen ? fmtPct(probs[chosen]) : skipped ? fmtPct(probs.hold) : "";
+  const standing =
+    venue.name === "kuru"
+      ? `> post a bid or an ask on ${venue.label}'s ${venue.pair} book. every ${venue.clock}. no abstaining.`
+      : `> post a bid or an ask on ${venue.label}'s ${venue.pair} book, or skip when neither beats the fee. every ${venue.clock}.`;
 
   return (
     <div className={styles.panel}>
       <section className={styles.section}>
         <div className={styles.sectionLabel}>STANDING ORDER</div>
         <div className={styles.order}>
-          {`> post a bid or an ask on ${venue.label}'s ${venue.pair} book. every ${venue.clock}. no abstaining.`}
+          {standing}
         </div>
       </section>
 

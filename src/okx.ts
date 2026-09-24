@@ -102,6 +102,7 @@ export class OkxVenue implements Venue {
   private availUsdt = 0;
   private posContracts = 0;
   private done: QuoteResult[] = [];
+  private fundingRatePct: number | null = null;
   /** Orders OKX refused in a row (not rate limits or outages). */
   private rejectStreak = 0;
   /** Our exchange-side emergency stop, as last placed; `wanted` is the position it should cover. */
@@ -152,6 +153,7 @@ export class OkxVenue implements Venue {
       throw new Error(`TRADE_SIZE ${config.tradeSize} ${this.base} must be a multiple of ${step} ${this.base} (one lot of ${this.lotSz} contract(s) x ${this.ctVal}) and at least ${Number(inst.minSz) * this.ctVal}`);
 
     await this.warmupTrades();
+    await this.readFunding();
     this.connectPublic();
     const book = await this.restBook();
     console.log(`okx ${this.instId}${this.demo ? " (demo)" : ""} · ${config.tradeSize} ${this.base} = ${contracts} contracts per order ≈ ${(config.tradeSize * book.mid).toFixed(2)} USDT · tick ${inst.tickSz}`);
@@ -178,8 +180,9 @@ export class OkxVenue implements Venue {
     }, Math.max(5, Math.floor(config.okx.tickMs / 10)));
   }
 
-  /** USDT available for margin, and our position (so the reducing side is never blocked for funds). */
+  /** Funding rate (dry runs too); live: USDT available for margin, and our position (so the reducing side is never blocked for funds). */
   async refresh() {
+    await this.readFunding();
     if (!this.live) return;
     const [bal, pos] = await Promise.allSettled([
       this.api.signed<{ details: { ccy: string; availBal: string; availEq: string }[] }[]>("GET", "/api/v5/account/balance", { ccy: "USDT" }),
@@ -358,6 +361,31 @@ export class OkxVenue implements Venue {
     this.halted = true;
     console.error(`okx: stopping. ${fatal ? "OKX refused the key for trading" : `${this.rejectStreak} orders refused in a row`}: ${err.message}`);
     process.kill(process.pid, "SIGINT");
+  }
+
+  extras() { return { fundingRatePct: this.fundingRatePct }; }
+
+  /** The swap's current funding rate, in percent per period. Never throws. */
+  private async readFunding() {
+    try {
+      const [f] = await this.api.public<{ fundingRate: string }[]>("/api/v5/public/funding-rate", { instId: this.instId });
+      if (f) this.fundingRatePct = round(Number(f.fundingRate) * 100, 5);
+    } catch {}
+  }
+
+  /** Take these orders off the book (the model skipped). Resolves to the ids that are gone. */
+  async cancel(ids: OrderId[]): Promise<OrderId[]> {
+    if (!this.live) return ids;
+    const gone: OrderId[] = [];
+    await Promise.all(ids.map(async (id) => {
+      try {
+        await this.api.signed("POST", "/api/v5/trade/cancel-order", { instId: this.instId, ordId: String(id) });
+        gone.push(id);
+      } catch (e) {
+        if (!(e instanceof OkxError && e.transient)) gone.push(id); // already filled, cancelling, or gone
+      }
+    }));
+    return gone;
   }
 
   private async readFee() {

@@ -150,6 +150,11 @@
   color: var(--late);
 }
 
+.kindSkip .word,
+.kindSkip .detail {
+  color: var(--muted-2);
+}
+
 .kindBuy .detail.muted,
 .kindSell .detail.muted,
 .kindLate .detail.muted {
@@ -165,7 +170,8 @@
   background: rgba(228, 87, 61, 0.07);
 }
 
-.kindLate {
+.kindLate,
+.kindSkip {
   background: transparent;
 }
 
@@ -177,7 +183,8 @@
   background: rgba(228, 87, 61, 0.16);
 }
 
-.newest.kindLate {
+.newest.kindLate,
+.newest.kindSkip {
   background: rgba(0, 0, 0, 0.05);
 }
 

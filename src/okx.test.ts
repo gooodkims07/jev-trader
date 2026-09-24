@@ -53,17 +53,23 @@ test("quotePrice: one tick inside, never crossing, join the touch when one tick 
   expect(v.quotePrice("sell", tight)).toBe(1.4621);
 });
 
-test("Jev's OKX question is about the perpetual; Kuru's is unchanged", () => {
-  const okx: VenueInfo = { name: "okx", label: "OKX", market: "XRP-USDT-SWAP", symbol: "XRP-USDT PERP", base: "XRP", quoteCcy: "USDT", priceDecimals: 4, sizeDecimals: 0, clock: "tick", blockMs: 300, txUrl: null };
+test("Jev's OKX question: bid, ask or skip, judged against the fee; Kuru's is unchanged", () => {
+  const okx: VenueInfo = { name: "okx", label: "OKX", market: "XRP-USDT-SWAP", symbol: "XRP-USDT PERP", base: "XRP", quoteCcy: "USDT", priceDecimals: 4, sizeDecimals: 0, clock: "tick", blockMs: 1000, txUrl: null };
   const q = questions(okx).direction;
-  expect(q.instructions.goal).toStartWith("Make markets on the XRP-USDT perpetual swap on OKX.");
-  expect(q.instructions.question).toContain("Will XRP be higher");
-  expect(q.instructions.goal).toContain("being short is as easy as being long");
-  expect(q.instructions.goal).toContain("Each block here is a 300 ms tick; `horizonBlocks` (~30 s)");
-  // A 1 s tick is described as such; the horizon follows HORIZON_BLOCKS x tick.
-  expect(questions({ ...okx, blockMs: 1000 }).direction.instructions.goal).toContain("Each block here is a 1 s tick; `horizonBlocks` (~100 s)");
-  const kuru = questions({ ...okx, name: "kuru", label: "Kuru", market: "", symbol: "MON-USDC", base: "MON", quoteCcy: "USDC" }).direction;
+  expect(q.instructions.question).toStartWith("Post a bid, post an ask, or skip this tick?");
+  expect(q.instructions.question).toContain("`costs.makerFeeBps`");
+  expect(Object.keys(q.criteria)).toEqual(["buy", "sell", "hold"]);
+  expect(q.criteria.hold).toStartWith("Skip:");
+  expect(q.instructions.goal).toStartWith("Make markets on the XRP-USDT perpetual swap on OKX. Each block here is a 1 s tick.");
+  expect(q.instructions.goal).toContain("(~100 s)"); // HORIZON_BLOCKS (100 in tests) x 1 s
+  expect(q.instructions.inputs).toContain("`position`");
+  expect(q.instructions.inputs).toContain("`lookbackBlocks`");
+  expect(q.instructions.inputs).toEndWith("Sizes and every field ending in `Mon` are in XRP.");
+  expect(JSON.stringify(q)).not.toMatch(/\bMON\b/);
+
+  const kuru = questions({ ...okx, name: "kuru", label: "Kuru", market: "", symbol: "MON-USDC", base: "MON", quoteCcy: "USDC", blockMs: 300 }).direction;
   expect(kuru.instructions.goal).toStartWith("Make markets on MON-USDC on Kuru.");
+  expect(Object.keys(kuru.criteria)).toEqual(["buy", "sell"]); // no skip on Kuru: an order every block
 });
 
 test("stops at once when OKX refuses the key for trading, not on outages", () => {
