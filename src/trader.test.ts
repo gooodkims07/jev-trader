@@ -230,3 +230,26 @@ test("OKX state carries lookback, position and costs; the question horizon stays
   expect(seen.position).toEqual({ side: "flat", sizeMon: 0, entry: null, unrealizedBps: 0, capMon: config.maxPosition });
   expect(seen.costs.makerFeeBps).toBe(5); // fake venue: 0.0005
 });
+
+test("MIN_SIDE_PROB: a skip whose likelier side clears the bar posts that side; below it, still a skip", async () => {
+  const saved = config.minSideProb;
+  config.minSideProb = 0.3;
+  try {
+    const venue = fakeVenue(34.9);
+    const events: BlockEvent[] = [];
+    let probs = { buy: 0.12, sell: 0.31, hold: 0.57 };
+    const trader = new Trader(venue, { name: "p", async decide() { return { action: "hold", probabilities: probs, upIn10: probs.buy, latencyMs: 1, inputTokens: 1 }; } }, (e) => events.push(e));
+    await trader.onBlock(80);
+    expect(events.at(-1)!.quote!.side).toBe("sell");
+    expect(events.at(-1)!.quote!.overSkip).toBe(true);
+    expect(events.at(-1)!.decision!.action).toBe("sell");
+    expect(events.at(-1)!.totals.skips).toBe(0);
+
+    probs = { buy: 0.29, sell: 0.2, hold: 0.51 };
+    await trader.onBlock(81);
+    expect(events.at(-1)!.quote).toBeNull();
+    expect(events.at(-1)!.totals.skips).toBe(1);
+  } finally {
+    config.minSideProb = saved;
+  }
+});

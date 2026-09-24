@@ -46,6 +46,8 @@ export interface Quote {
   orderId: OrderId | null;
   /** The position cap or funds picked this side; the model's probabilities still show its call. */
   capped: boolean;
+  /** The model skipped, but this side's probability cleared MIN_SIDE_PROB, so the order went out anyway. */
+  overSkip?: boolean;
   /** Set when a stop or take-profit forced this order: a reduce-only order closing the position. */
   close?: CloseReason;
 }

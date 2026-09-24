@@ -120,6 +120,12 @@ export class Trader {
       }
 
       const decision = await this.model.decide(this.buildState(block, book));
+      // A skip whose likelier side still clears MIN_SIDE_PROB is overruled: post that side.
+      let overSkip = false;
+      if (decision.action === "hold" && config.minSideProb > 0) {
+        const p = decision.probabilities, best: Side = p.buy >= p.sell ? "buy" : "sell";
+        if (p[best] >= config.minSideProb) { decision.action = best; overSkip = true; }
+      }
       const skip = decision.action === "hold";
       const wanted: Side = decision.action === "sell" ? "sell" : "buy";
       const other: Side = wanted === "buy" ? "sell" : "buy";
@@ -137,6 +143,7 @@ export class Trader {
         const size = closeSide ? Math.abs(this.position.mon) : config.tradeSize;
         quote = await this.venue.send(block, side, size, book, cancel, side !== wanted, !!closeSide);
         if (closeSide) quote.close = this.closing!;
+        else if (overSkip) quote.overSkip = true;
         this.totals.quotes++;
         if (quote.status === "sim") {
           this.orders.clear(); // the simulated cancel

@@ -64,6 +64,11 @@ export const config = {
   pendingBlocks: 10, // give up on a tx with no receipt after this many blocks
   refreshBlocks: 200, // how often to refresh the fee estimate, margin balances and the vault check
   horizonBlocks: Number(env("HORIZON_BLOCKS", "100")), // the model is asked about the move over this many blocks (~30 s)
+  /**
+   * When the model skips (OKX), still post on the likelier of bid and ask if its probability is at least
+   * this (0.3 = 30%). 0 = always respect the skip.
+   */
+  minSideProb: Number(env("MIN_SIDE_PROB", "0")),
   /** How far back the model's inputs look (taker flow, sampled mids). Defaults to the horizon, as on Kuru. */
   lookbackBlocks: Number(env("LOOKBACK_BLOCKS", env("HORIZON_BLOCKS", "100"))),
   model: env("MODEL", "mock") as "mock" | "jev",

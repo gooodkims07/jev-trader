@@ -99,7 +99,7 @@ export default function Feed({ events }: { events: BlockEvent[] }) {
               detail = `FILL ${fmtSize(fill.size, sizeDp)} @ ${fmtPrice(fill.price, venue.priceDecimals)}`;
             } else if (decided && quote) {
               const word = quote.side === "buy" ? "bid" : "ask";
-              detail = `${word} ${fmtSize(quote.size, sizeDp)} @ ${fmtPrice(quote.price, venue.priceDecimals)}${quote.close ? " close" : quote.capped ? " cap" : ""}`;
+              detail = `${word} ${fmtSize(quote.size, sizeDp)} @ ${fmtPrice(quote.price, venue.priceDecimals)}${quote.close ? " close" : quote.capped ? " cap" : quote.overSkip ? " override" : ""}`;
               detailMuted = quote.status === "reverted" || quote.status === "lost";
             } else if (kind === "skip") {
               detail = "no order";
