@@ -10,7 +10,7 @@ const SECRET = "22582BD0CFF14C41EDBF1AB98506286D";
 
 test("sign: base64 HMAC-SHA256 over timestamp + METHOD + requestPath (+ query) + body", () => {
   expect(sign(SECRET, "2020-12-08T09:08:57.715ZGET/api/v5/account/balance?ccy=USDT")).toBe("Ku79U+75wKPSP3i+t02ssUto76AYiAT/aws7hI3GZpg=");
-  expect(sign(SECRET, '2020-12-08T09:08:57.715ZPOST/api/v5/trade/order{"instId":"MON-USDT-SWAP","sz":"20"}')).toBe("D/l8rzAnDNHvrCyonnfOzknaxied4b3JiL3jEegP7PI=");
+  expect(sign(SECRET, '2020-12-08T09:08:57.715ZPOST/api/v5/trade/order{"instId":"XRP-USDT-SWAP","sz":"0.05"}')).toBe("9x25KbJ8FyHFodZvumx8bOkBwix0lcmi3QXnXk6jWAM=");
   // WebSocket login: unix seconds + GET + /users/self/verify
   expect(sign(SECRET, "1538054050GET/users/self/verify")).toBe("+LdIr8lkkvhr5hoA3g9TMC0+uQJ849ftAcocA/ouu4M=");
 });
@@ -30,38 +30,39 @@ test("stepDecimals", () => {
   expect(stepDecimals("10")).toBe(0);
 });
 
-/** A venue with MON-USDT-SWAP's instrument (tick 0.00001, 10 MON contracts), no network. */
-function monSwap() {
+/** A venue with XRP-USDT-SWAP's instrument (tick 0.0001, 100 XRP contracts, lots of 0.01), no network. */
+function xrpSwap() {
   const v = new OkxVenue() as any;
-  Object.assign(v, { tick: 0.00001, tickDec: 5, ctVal: 10, lotSz: 1 });
+  Object.assign(v, { tick: 0.0001, tickDec: 4, ctVal: 100, lotSz: 0.01 });
   return v as { quotePrice: OkxVenue["quotePrice"]; toBook: (m: unknown, ms: number) => ReturnType<typeof bookFromLevels> };
 }
 
-test("books arrive in contracts and leave in MON", () => {
-  const book = monSwap().toBook({ bids: [["0.02462", "1024", "0", "3"]], asks: [["0.02464", "429", "0", "4"]], ts: "0" }, 0);
-  expect(book.levels.bids[0]).toEqual([0.02462, 10240]);
-  expect(book.levels.asks[0]).toEqual([0.02464, 4290]);
+test("books arrive in contracts and leave in XRP", () => {
+  const book = xrpSwap().toBook({ bids: [["1.4620", "12.5", "0", "3"]], asks: [["1.4622", "0.4", "0", "4"]], ts: "0" }, 0);
+  expect(book.levels.bids[0]).toEqual([1.462, 1250]);
+  expect(book.levels.asks[0]).toEqual([1.4622, 40]);
 });
 
 test("quotePrice: one tick inside, never crossing, join the touch when one tick wide", () => {
-  const v = monSwap();
-  const wide = bookFromLevels(1, [[0.02462, 1]], [[0.02464, 1]]);
-  expect(v.quotePrice("buy", wide)).toBe(0.02463);
-  expect(v.quotePrice("sell", wide)).toBe(0.02463);
-  const tight = bookFromLevels(1, [[0.02462, 1]], [[0.02463, 1]]);
-  expect(v.quotePrice("buy", tight)).toBe(0.02462);
-  expect(v.quotePrice("sell", tight)).toBe(0.02463);
+  const v = xrpSwap();
+  const wide = bookFromLevels(1, [[1.462, 1]], [[1.4622, 1]]);
+  expect(v.quotePrice("buy", wide)).toBe(1.4621);
+  expect(v.quotePrice("sell", wide)).toBe(1.4621);
+  const tight = bookFromLevels(1, [[1.462, 1]], [[1.4621, 1]]);
+  expect(v.quotePrice("buy", tight)).toBe(1.462);
+  expect(v.quotePrice("sell", tight)).toBe(1.4621);
 });
 
 test("Jev's OKX question is about the perpetual; Kuru's is unchanged", () => {
-  const okx: VenueInfo = { name: "okx", label: "OKX", market: "MON-USDT-SWAP", symbol: "MON-USDT PERP", base: "MON", quoteCcy: "USDT", priceDecimals: 5, sizeDecimals: 0, clock: "tick", blockMs: 300, txUrl: null };
+  const okx: VenueInfo = { name: "okx", label: "OKX", market: "XRP-USDT-SWAP", symbol: "XRP-USDT PERP", base: "XRP", quoteCcy: "USDT", priceDecimals: 4, sizeDecimals: 0, clock: "tick", blockMs: 300, txUrl: null };
   const q = questions(okx).direction;
-  expect(q.instructions.goal).toStartWith("Make markets on the MON-USDT perpetual swap on OKX.");
+  expect(q.instructions.goal).toStartWith("Make markets on the XRP-USDT perpetual swap on OKX.");
+  expect(q.instructions.question).toContain("Will XRP be higher");
   expect(q.instructions.goal).toContain("being short is as easy as being long");
   expect(q.instructions.goal).toContain("Each block here is a 300 ms tick; `horizonBlocks` (~30 s)");
   // A 1 s tick is described as such; the horizon follows HORIZON_BLOCKS x tick.
   expect(questions({ ...okx, blockMs: 1000 }).direction.instructions.goal).toContain("Each block here is a 1 s tick; `horizonBlocks` (~100 s)");
-  const kuru = questions({ ...okx, name: "kuru", label: "Kuru", symbol: "MON-USDC", quoteCcy: "USDC" }).direction;
+  const kuru = questions({ ...okx, name: "kuru", label: "Kuru", market: "", symbol: "MON-USDC", base: "MON", quoteCcy: "USDC" }).direction;
   expect(kuru.instructions.goal).toStartWith("Make markets on MON-USDC on Kuru.");
 });
 

@@ -12,7 +12,7 @@ With no `PRIVATE_KEY` it dry-runs: real book, real decisions, simulated fills. S
 
 ## Venues
 
-Kuru on Monad is the default and the demo. `VENUE=okx` runs the same loop on an OKX USDT perpetual swap instead: `OKX_INST_ID` picks it (default `MON-USDT-SWAP`). Everything exchange specific sits behind the `Venue` interface in `src/venue.ts`; the Trader, the model and the server only see that.
+Kuru on Monad is the default and the demo. `VENUE=okx` runs the same loop on an OKX USDT perpetual swap instead: `OKX_INST_ID` picks it (default `XRP-USDT-SWAP`). Everything exchange specific sits behind the `Venue` interface in `src/venue.ts`; the Trader, the model and the server only see that.
 
 | | Kuru (`VENUE=kuru`) | OKX (`VENUE=okx`) |
 |---|---|---|
@@ -27,8 +27,8 @@ Kuru on Monad is the default and the demo. `VENUE=okx` runs the same loop on an 
 | Live when | `PRIVATE_KEY` is set | `OKX_API_KEY`, `OKX_SECRET_KEY` and `OKX_PASSPHRASE` are set |
 
 OKX notes:
-- Sizes stay in the underlying and are converted to contracts: MON-USDT-SWAP contracts are 10 MON, so `TRADE_SIZE` must be a multiple of 10. For any other swap set `TRADE_SIZE` and `MAX_POSITION` in its underlying; the bot refuses to start otherwise.
-- `OKX_DEMO` defaults to `true`: live runs go to OKX demo trading (`x-simulated-trading: 1`, demo keys). Demo trading lists fewer swaps and **not MON-USDT-SWAP**; use e.g. `BTC-USDT-SWAP` there. A dry run always reads the real market. `OKX_DEMO=false` trades real money.
+- Sizes stay in the underlying and are converted to contracts: XRP-USDT-SWAP contracts are 100 XRP in lots of 0.01, so `TRADE_SIZE` is a whole number of XRP. Set `TRADE_SIZE` and `MAX_POSITION` in the swap's coin; the bot refuses to start otherwise (the defaults are MON amounts for Kuru).
+- `OKX_DEMO` defaults to `true`: live runs go to OKX demo trading (`x-simulated-trading: 1`, demo keys). Demo trading lists fewer swaps than the real market (XRP-USDT-SWAP is listed there). A dry run always reads the real market. `OKX_DEMO=false` trades real money.
 - The account must be in net position mode. Startup sets `OKX_LEVERAGE` (default 2) and `OKX_MARGIN_MODE` (default `isolated`) for the swap, reads the maker fee, cancels orders it left behind (client ids starting `jev`), and refuses to start with a position already open. Ctrl-C cancels our open orders and warns if a position is left; it never closes a position for you.
 - Register the API key's IP with OKX and give it read and trade permissions only (no withdrawal). The account must also be allowed to trade futures: OKX error `50123` ("does not have trading permission") on every order means it is not.
 - Refused orders stop the bot: at once on an auth or permission refusal (HTTP 401, codes 501xx), otherwise after 20 in a row. It shuts down as on Ctrl-C.

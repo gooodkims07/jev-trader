@@ -28,7 +28,7 @@ function fakeVenue(price = 34.9): Venue & { trades: FakeTrades; sent: OrderId[][
   const reduceOnly: boolean[] = [];
   let current = book(0);
   return {
-    info: { name: "okx", label: "OKX", market: "MON-USDT-SWAP", symbol: "MON-USDT PERP", base: "MON", quoteCcy: "USDT", priceDecimals: 1, sizeDecimals: 1, clock: "tick", blockMs: 300, txUrl: null },
+    info: { name: "okx", label: "OKX", market: "XRP-USDT-SWAP", symbol: "XRP-USDT PERP", base: "XRP", quoteCcy: "USDT", priceDecimals: 1, sizeDecimals: 1, clock: "tick", blockMs: 300, txUrl: null },
     account: null, live: false, canAfford: () => true, makerFeeRate: 0.0005,
     trades: new FakeTrades(), sent, reduceOnly,
     setMid(mid: number) { current = { ...book(0), bid: mid - 0.1, ask: mid + 0.1, mid, levels: { bids: [[mid - 0.1, 100]], asks: [[mid + 0.1, 100]] } }; },

@@ -23,7 +23,7 @@ export const config = {
     secretKey: okxSecret,
     passphrase: okxPassphrase,
     /** USDT-margined perpetual swap. Sizes (TRADE_SIZE, MAX_POSITION) are in its underlying, converted to contracts. */
-    instId: env("OKX_INST_ID", "MON-USDT-SWAP")!,
+    instId: env("OKX_INST_ID", "XRP-USDT-SWAP")!,
     /** Demo trading (OKX's paper account, `x-simulated-trading: 1`) unless OKX_DEMO=false. Demo keys only work there. */
     demo: env("OKX_DEMO", "true") !== "false",
     /** isolated caps the loss at the margin posted for this swap; cross shares the whole USDT balance. */

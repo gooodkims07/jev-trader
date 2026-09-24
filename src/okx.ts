@@ -1,10 +1,10 @@
 /**
- * An OKX USDT-margined perpetual swap (OKX_INST_ID, default MON-USDT-SWAP) as a Venue.
+ * An OKX USDT-margined perpetual swap (OKX_INST_ID, default XRP-USDT-SWAP) as a Venue.
  *
  * No chain, so a timer stands in for the block: tick = floor(now / tickMs), and trade prints are
  * stamped with the tick of their exchange timestamp. OKX sizes are contracts (ctVal of the
  * underlying each); everything that leaves this file is in the underlying, so the Trader, the model
- * and the dashboard see MON, not contracts.
+ * and the dashboard see XRP (or whatever the swap trades), not contracts.
  *
  * Market data: public WebSocket `books5` and `trades`, with REST as the fallback when the socket is
  * quiet. Our fills: private WebSocket `orders` (fillSz, fillPx, fillFee per update). Each send cancels
@@ -113,7 +113,7 @@ export class OkxVenue implements Venue {
 
   constructor() {
     const [base, quote, kind] = this.instId.split("-");
-    if (!base || quote !== "USDT" || kind !== "SWAP") throw new Error(`OKX_INST_ID must be a USDT perpetual like MON-USDT-SWAP, got ${this.instId}`);
+    if (!base || quote !== "USDT" || kind !== "SWAP") throw new Error(`OKX_INST_ID must be a USDT perpetual like XRP-USDT-SWAP, got ${this.instId}`);
     this.base = base;
     this.info = {
       name: "okx", label: "OKX", market: this.instId, symbol: `${base}-USDT PERP`, base, quoteCcy: "USDT",

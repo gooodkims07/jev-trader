@@ -102,9 +102,9 @@ export interface VenueInfo {
   name: "kuru" | "okx";
   /** Exchange name as shown. */
   label: string;
-  /** Kuru: the OrderBook contract. OKX: the instrument id, e.g. MON-USDT-SWAP. */
+  /** Kuru: the OrderBook contract. OKX: the instrument id, e.g. XRP-USDT-SWAP. */
   market: string;
-  /** "MON-USDC", "MON-USDT": base first. */
+  /** "MON-USDC", "XRP-USDT PERP": base first. */
   symbol: string;
   /** The asset traded: "MON", "BTC". Sizes are in this. */
   base: string;
