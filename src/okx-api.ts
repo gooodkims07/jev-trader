@@ -14,6 +14,8 @@ export const okxWs = (demo: boolean, kind: "public" | "private") =>
   `wss://${demo ? "wspap" : "ws"}.okx.com:8443/ws/v5/${kind}`;
 
 export type Params = Record<string, string>;
+/** POST bodies may carry booleans (reduceOnly, cxlOnClosePos) and arrays (cancel-algos). */
+export type Body = Record<string, string | boolean> | Record<string, string | boolean>[];
 
 /** Every v5 response: code "0" on success. Per-order results carry their own sCode/sMsg. */
 interface Envelope<T> { code: string; msg: string; data: T }
@@ -64,7 +66,7 @@ export class OkxApi {
   }
 
   /** Signed call. GET params go in the query string (and the signature), POST params in a JSON body. */
-  signed<T>(method: "GET" | "POST", path: string, params: Params | Params[] = {}): Promise<T> {
+  signed<T>(method: "GET" | "POST", path: string, params: Params | Body = {}): Promise<T> {
     if (!this.authed) throw new Error("okx: OKX_API_KEY, OKX_SECRET_KEY and OKX_PASSPHRASE are required");
     let requestPath = path, body = "";
     if (method === "GET") {
@@ -109,5 +111,5 @@ export class OkxApi {
 /** Decimals needed to write a multiple of `step` exactly ("0.00001" -> 5). */
 export const stepDecimals = (step: string) => (step.includes(".") ? step.split(".")[1]!.replace(/0+$/, "").length : 0);
 
-/** A client order id OKX accepts: letters and digits, at most 32. Ours start with "jev". */
-export const newClOrdId = () => "jev" + crypto.randomUUID().replaceAll("-", "").slice(0, 29);
+/** A client order id OKX accepts: letters and digits, at most 32. Ours start with "jev" (stops with "jevsl"). */
+export const newClOrdId = (prefix = "jev") => prefix + crypto.randomUUID().replaceAll("-", "").slice(0, 32 - prefix.length);

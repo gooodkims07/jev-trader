@@ -24,7 +24,7 @@ const trader = new Trader(
     if (e.decision && !e.decision.late) {
       const p = e.decision.probabilities;
       const q = e.quote;
-      const quote = !q ? " NO QUOTE (cap or funds on both sides)" : ` ${q.side.toUpperCase()} ${q.size} @ ${px(q.price)}${q.capped ? " capped" : ""}${q.status === "sim" ? " (sim)" : ` cancel ${q.cancel.length} ${q.txHash ?? q.ref}`}`;
+      const quote = !q ? " NO QUOTE (cap or funds on both sides)" : ` ${q.side.toUpperCase()} ${q.size} @ ${px(q.price)}${q.close ? ` close(${q.close})` : q.capped ? " capped" : ""}${q.status === "sim" ? " (sim)" : ` cancel ${q.cancel.length} ${q.txHash ?? q.ref}`}`;
       console.log(`#${e.block} ${pxMid(e.mid)} b${(p.buy * 100).toFixed(0)} s${(p.sell * 100).toFixed(0)} ${e.decision.latencyMs}ms${quote} pnl ${e.totals.pnlUsd} ${info.quoteCcy}${t ? ` · read ${t.readMs}ms loop ${t.loopMs}ms` : ""}`);
     }
   },
@@ -40,6 +40,14 @@ const trader = new Trader(
 
 const where = info.name === "kuru" ? `market ${info.market} · read ${config.readRpcUrl}` : `market ${info.market} · ${config.okx.tickMs} ms ticks${venue.live && config.okx.demo ? " · OKX demo trading" : ""}`;
 console.log(`jev-trader · ${info.label} · model=${model.name} · post-only ${config.quoteInsideTicks} tick inside the touch · horizon ${config.horizonBlocks} ${info.clock}s · ${venue.live ? `account ${venue.account}` : "DRY RUN"} · ${where} · :${config.port}`);
+const r = config.risk;
+if (r.sessionStopLoss || r.sessionTakeProfit || r.positionStopPct || r.positionTakePct)
+  console.log(`risk · session stop -${r.sessionStopLoss || "off"} take +${r.sessionTakeProfit || "off"} ${info.quoteCcy} · position stop ${r.positionStopPct || "off"}% take ${r.positionTakePct || "off"}% · closes with reduce-only post-only orders`);
+// A session stop or take-profit closed the position: shut down as on Ctrl-C (cancel our orders, report any position).
+trader.onHalt = (reason) => {
+  console.log(`${reason}: position closed, stopping`);
+  process.kill(process.pid, "SIGINT");
+};
 venue.startClock((block) => trader.onBlock(block));
 
 // Take our orders off the book on the way out (OKX). A second signal exits at once.

@@ -46,7 +46,12 @@ export interface Quote {
   orderId: OrderId | null;
   /** The position cap or funds picked this side; the model's probabilities still show its call. */
   capped: boolean;
+  /** Set when a stop or take-profit forced this order: a reduce-only order closing the position. */
+  close?: CloseReason;
 }
+
+/** Why the bot is closing its position. session-*: then it stops. position-*: then it trades on. */
+export type CloseReason = "session-stop" | "session-take" | "position-stop" | "position-take";
 
 /** A maker fill: someone hit one of our resting orders. */
 export interface Fill {
@@ -139,10 +144,18 @@ export interface Venue {
   readBook(): Promise<Book>;
   /** Where an order on `side` rests: inside the touch by `quoteInsideTicks`, never crossing. */
   quotePrice(side: Side, book: Book): number;
-  /** Cancel `cancel`, post one post-only limit order. Returns without waiting for confirmation. */
-  send(block: number, side: Side, sizeMon: number, book: Book, cancel: OrderId[], capped: boolean): Promise<Quote>;
+  /**
+   * Cancel `cancel`, post one post-only limit order. Returns without waiting for confirmation.
+   * `reduceOnly`: the order may only shrink the position (OKX sends reduceOnly; Kuru spot ignores it).
+   */
+  send(block: number, side: Side, sizeMon: number, book: Book, cancel: OrderId[], capped: boolean, reduceOnly?: boolean): Promise<Quote>;
   /** Sends that resolved (or timed out) since the last call. */
   pollPending(block: number): Promise<QuoteResult[]>;
+  /**
+   * Live only, after fills change the position: keep any exchange-side protection in line with it (signed
+   * size in the base asset, average entry). Optional; OKX places its emergency stop here.
+   */
+  protect?(position: { mon: number; entry: number | null }): void;
   /** On SIGINT/SIGTERM: take our orders off the book. Optional; Kuru leaves the last order resting as before. */
   shutdown?(): Promise<void>;
 }

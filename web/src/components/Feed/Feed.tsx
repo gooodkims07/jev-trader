@@ -98,7 +98,7 @@ export default function Feed({ events }: { events: BlockEvent[] }) {
               detail = `FILL ${fmtSize(fill.size, sizeDp)} @ ${fmtPrice(fill.price, venue.priceDecimals)}`;
             } else if (decided && quote) {
               const word = quote.side === "buy" ? "bid" : "ask";
-              detail = `${word} ${fmtSize(quote.size, sizeDp)} @ ${fmtPrice(quote.price, venue.priceDecimals)}${quote.capped ? " cap" : ""}`;
+              detail = `${word} ${fmtSize(quote.size, sizeDp)} @ ${fmtPrice(quote.price, venue.priceDecimals)}${quote.close ? " close" : quote.capped ? " cap" : ""}`;
               detailMuted = quote.status === "reverted" || quote.status === "lost";
             } else if (decided) {
               detail = "no quote";

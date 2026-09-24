@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { OkxError, newClOrdId, sign, stepDecimals } from "./okx-api";
 import { OkxVenue } from "./okx";
 import { questions } from "./model";
+import { config } from "./config";
 import { bookFromLevels, type VenueInfo } from "./venue";
 
 // Expected values computed independently with Python's hmac/hashlib, using the example secret from OKX's docs.
@@ -96,4 +97,22 @@ test("other refusals stop the bot after 20 in a row", () => {
   } finally {
     (process as any).kill = realKill;
   }
+});
+
+test("emergency stop: 7% from the entry on the closing side, on the tick; none when flat", () => {
+  const saved = config.okx.emergencyStopPct;
+  config.okx.emergencyStopPct = 7;
+  try {
+    const v = new OkxVenue() as any;
+    Object.assign(v, { tick: 0.0001, tickDec: 4, ctVal: 100, lotSz: 0.01 }); // XRP-USDT-SWAP
+    expect(v.stopFor({ mon: 15, entry: 1.518 })).toEqual({ side: "sell", trigger: 1.4117 }); // long: 1.518 x 0.93
+    expect(v.stopFor({ mon: -15, entry: 1.518 })).toEqual({ side: "buy", trigger: 1.6243 }); // short: 1.518 x 1.07
+    expect(v.stopFor({ mon: 0, entry: null })).toBeNull();
+  } finally {
+    config.okx.emergencyStopPct = saved;
+  }
+});
+
+test("client ids: orders start jev, stops jevsl, both 32 letters and digits", () => {
+  expect(newClOrdId("jevsl")).toMatch(/^jevsl[0-9a-f]{27}$/);
 });

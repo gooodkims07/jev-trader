@@ -1,7 +1,7 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { config } from "./config";
 import type { Action, Decision, Model, TradeState } from "./model";
-import type { Book, Fill, MakerFill, OrderId, Quote, QuoteResult, Side, TradePrint, Venue } from "./venue";
+import type { Book, CloseReason, Fill, MakerFill, OrderId, Quote, QuoteResult, Side, TradePrint, Venue } from "./venue";
 
 export interface BlockEvent {
   block: number;
@@ -18,6 +18,8 @@ export interface BlockEvent {
   /** Our size known to be resting on the book after this block's order. */
   resting: { bidMon: number; askMon: number };
   position: { side: "long" | "short" | "flat"; size: number; entryPrice: number | null; unrealizedUsd: number; unrealizedMon: number };
+  /** A stop or take-profit is closing the position (see config.risk), or null. */
+  closing: CloseReason | null;
   totals: Totals;
 }
 
@@ -69,6 +71,11 @@ export class Trader {
   private inflight = new Map<string, Quote>();
   private simId = 0;
   private position = { mon: 0, costUsd: 0 }; // signed inventory and its cost basis
+  /** A stop or take-profit that is closing the position. Session reasons stop the bot once flat. */
+  private closing: CloseReason | null = null;
+  private halted = false;
+  /** Called once when a session stop or take-profit has closed the position: the bot should shut down. */
+  onHalt: (reason: CloseReason) => void = () => {};
   private totals: Totals = { blocks: 0, decisions: 0, quotes: 0, fills: 0, reverted: 0, lateBlocks: 0, jevUsd: 0, gasMon: 0, gasUsd: 0, feesUsd: 0, realizedUsd: 0, pnlUsd: 0, pnlMon: 0, pnlPct: 0 };
 
   constructor(
@@ -82,6 +89,7 @@ export class Trader {
   }
 
   async onBlock(block: number) {
+    if (this.halted) return;
     this.totals.blocks++;
     this.confirmPending(block); // off the hot path: receipts for earlier blocks' sends
     if (this.totals.blocks % config.refreshBlocks === 0) this.venue.refresh().catch(() => {}); // balances, fee estimates
@@ -100,11 +108,22 @@ export class Trader {
       if (this.mids.length > 400) this.mids.shift();
       this.venue.trades.poll(block).then(() => this.harvest()); // off the hot path: prints (and our fills) since the last poll
 
+      this.checkRisk(book);
+      if (this.closing?.startsWith("session") && this.position.mon === 0) {
+        // A session stop or take-profit has nothing left to close: stop here.
+        this.halted = true;
+        this.emit(block, book, null, null, false);
+        this.onHalt(this.closing);
+        return;
+      }
+
       const decision = await this.model.decide(this.buildState(block, book));
       const wanted: Side = decision.action === "sell" ? "sell" : "buy";
       const other: Side = wanted === "buy" ? "sell" : "buy";
-      // The position cap (and, live, funds) can only pick the reducing side. The probabilities still show the model's call.
-      const side: Side | null = this.allowed(wanted, book) ? wanted : this.allowed(other, book) ? other : null;
+      // While closing, the side is the one that shrinks the position. Otherwise the position cap (and, live,
+      // funds) can only pick the reducing side. The probabilities still show the model's call either way.
+      const closeSide: Side | null = this.closing && this.position.mon !== 0 ? (this.position.mon > 0 ? "sell" : "buy") : null;
+      const side: Side | null = closeSide ?? (this.allowed(wanted, book) ? wanted : this.allowed(other, book) ? other : null);
       this.totals.decisions++;
       this.totals.jevUsd += (decision.inputTokens / 1e6) * config.jevUsdPerMTok;
 
@@ -112,7 +131,9 @@ export class Trader {
       if (side) {
         decision.action = side;
         const cancel = [...this.orders.keys()].filter(isReal);
-        quote = await this.venue.send(block, side, config.tradeSize, book, cancel, side !== wanted);
+        const size = closeSide ? Math.abs(this.position.mon) : config.tradeSize;
+        quote = await this.venue.send(block, side, size, book, cancel, side !== wanted, !!closeSide);
+        if (closeSide) quote.close = this.closing!;
         this.totals.quotes++;
         if (quote.status === "sim") {
           this.orders.clear(); // the simulated cancel
@@ -159,6 +180,7 @@ export class Trader {
       const b = (f as Fill & { block: number }).block;
       byBlock.set(b, [...(byBlock.get(b) ?? []), f]);
     }
+    if (this.venue.live) this.venue.protect?.({ mon: this.position.mon, entry: this.entryPrice() });
     for (const [block, fs] of byBlock) {
       const fill = aggregate(fs, Math.max(4, this.venue.info.sizeDecimals));
       const e = this.history.find((h) => h.block === block);
@@ -212,6 +234,41 @@ export class Trader {
       }
     }
     return out;
+  }
+
+  /** P&L of this run at `mid`: realized + unrealized - gas - fees, in the quote currency. */
+  private sessionPnl(mid: number) {
+    const t = this.totals;
+    return t.realizedUsd + this.unrealizedUsd(mid) - t.gasMon * mid - t.feesUsd;
+  }
+
+  /**
+   * Start closing when a stop or take-profit is hit (config.risk; 0 turns a check off). A position close
+   * ends once flat and trading resumes; a session close ends the run. Closing is never cancelled by the
+   * price coming back.
+   */
+  private checkRisk(book: Book) {
+    const r = config.risk;
+    if (this.closing) {
+      if (this.closing.startsWith("position") && this.position.mon === 0) {
+        console.log(`${this.closing}: position closed, trading on`);
+        this.closing = null;
+      }
+      if (this.closing) return;
+    }
+    const pnl = this.sessionPnl(book.mid);
+    let reason: CloseReason | null = null;
+    if (r.sessionStopLoss > 0 && pnl <= -r.sessionStopLoss) reason = "session-stop";
+    else if (r.sessionTakeProfit > 0 && pnl >= r.sessionTakeProfit) reason = "session-take";
+    else if (this.position.mon !== 0) {
+      const entry = this.entryPrice()!;
+      const favour = ((book.mid - entry) / entry) * Math.sign(this.position.mon) * 100; // % move in our favour
+      if (r.positionStopPct > 0 && favour <= -r.positionStopPct) reason = "position-stop";
+      else if (r.positionTakePct > 0 && favour >= r.positionTakePct) reason = "position-take";
+    }
+    if (!reason) return;
+    this.closing = reason;
+    console.log(`${reason}: session P&L ${pnl.toFixed(4)}, position ${this.position.mon} @ ${this.entryPrice() ?? "-"}, mid ${book.mid}: closing with reduce-only post-only orders${reason.startsWith("session") ? ", then stopping" : ""}`);
   }
 
   private restingMon(side: Side) {
@@ -282,7 +339,7 @@ export class Trader {
     const t = this.totals;
     t.gasUsd = t.gasMon * book.mid;
     const unrealized = this.unrealizedUsd(book.mid);
-    t.pnlUsd = t.realizedUsd + unrealized - t.gasUsd - t.feesUsd;
+    t.pnlUsd = t.realizedUsd + unrealized - t.gasUsd - t.feesUsd; // = sessionPnl(book.mid)
     t.pnlMon = t.pnlUsd / book.mid;
     t.pnlPct = (t.pnlUsd / config.bankrollUsd) * 100;
     const size = Math.abs(this.position.mon);
@@ -298,6 +355,7 @@ export class Trader {
         side: this.position.mon > 0 ? "long" : this.position.mon < 0 ? "short" : "flat",
         size, entryPrice: this.entryPrice(), unrealizedUsd: round(unrealized, 4), unrealizedMon: round(unrealized / book.mid, 4),
       },
+      closing: this.closing,
       totals: { ...t, jevUsd: round(t.jevUsd, 6), gasMon: round(t.gasMon, 6), gasUsd: round(t.gasUsd, 6), feesUsd: round(t.feesUsd, 6), realizedUsd: round(t.realizedUsd, 4), pnlUsd: round(t.pnlUsd, 4), pnlMon: round(t.pnlMon, 4), pnlPct: round(t.pnlPct, 3) },
     };
     this.history.push(event);

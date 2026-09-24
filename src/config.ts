@@ -29,6 +29,12 @@ export const config = {
     /** isolated caps the loss at the margin posted for this swap; cross shares the whole USDT balance. */
     marginMode: env("OKX_MARGIN_MODE", "isolated") as "isolated" | "cross",
     leverage: Number(env("OKX_LEVERAGE", "2")),
+    /**
+     * Exchange-side emergency stop, in percent from the average entry (0 = off). A conditional market order
+     * on OKX closes the whole position if the mark price moves this far against it, even with the bot down.
+     * Re-placed as the position flips or its entry moves; OKX drops it when the position closes.
+     */
+    emergencyStopPct: Number(env("OKX_EMERGENCY_STOP_PCT", "0")),
     /** Maker fee rate for simulated fills (OKX's regular tier). Live fills carry OKX's own fillFee. */
     makerFeeRate: Number(env("OKX_MAKER_FEE_RATE", "0.0002")),
     /** Length of one loop step. No chain, so a timer stands in for the block. */
@@ -62,4 +68,19 @@ export const config = {
   jevUsdPerMTok: 0.042,
   port: Number(env("PORT", "3000")),
   historySize: 1000,
+  /**
+   * Stops and take-profits, all off (0) by default. Money in the venue's quote currency (USDT on OKX),
+   * positions as the price move from the average entry, in percent.
+   *   session: P&L of this run (realized + unrealized - gas - fees) at or below -stopLoss, or at or above
+   *            takeProfit: close the position, then stop the bot.
+   *   position: the open position moved stopPct against or takePct in favour of its entry: close it, then
+   *            go on trading.
+   * Closing posts reduce-only post-only orders at the touch each block until flat ("slowly": no market orders).
+   */
+  risk: {
+    sessionStopLoss: Number(env("RISK_SESSION_STOP_LOSS", "0")),
+    sessionTakeProfit: Number(env("RISK_SESSION_TAKE_PROFIT", "0")),
+    positionStopPct: Number(env("RISK_POSITION_STOP_PCT", "0")),
+    positionTakePct: Number(env("RISK_POSITION_TAKE_PCT", "0")),
+  },
 };

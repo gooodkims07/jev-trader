@@ -25,6 +25,7 @@ const SOCKET_QUIET_MS = 10_000;
 /** OKX drops a socket after 30 s of silence; "ping" keeps a quiet one alive and counts as liveness. */
 const PING_MS = 5_000;
 const CL_PREFIX = "jev";
+const STOP_PREFIX = "jevsl";
 /** Stop after this many refused orders in a row. */
 const MAX_REJECTS = 20;
 
@@ -103,6 +104,11 @@ export class OkxVenue implements Venue {
   private done: QuoteResult[] = [];
   /** Orders OKX refused in a row (not rate limits or outages). */
   private rejectStreak = 0;
+  /** Our exchange-side emergency stop, as last placed; `wanted` is the position it should cover. */
+  private stop: { algoId: string; side: Side; trigger: number } | null = null;
+  private wanted: { mon: number; entry: number | null } = { mon: 0, entry: null };
+  private syncing = false;
+  private stopWarnedAt = 0;
   private halted = false;
 
   constructor() {
@@ -157,6 +163,7 @@ export class OkxVenue implements Venue {
       .catch((e: OkxError) => { throw new Error(`okx set-leverage ${config.okx.leverage}x ${config.okx.marginMode}: ${e.message}. Try OKX_MARGIN_MODE=cross if isolated is not allowed for this account.`); });
     await this.readFee();
     await this.cancelLeftovers();
+    await this.cancelLeftoverStops();
     await this.refresh();
     if (this.posContracts !== 0) throw new Error(`okx: ${this.instId} already has a position of ${this.posContracts * this.ctVal} ${this.base}. Close it first: the bot's cap and P&L start from flat.`);
     this.connectPrivate();
@@ -184,6 +191,12 @@ export class OkxVenue implements Venue {
     } else console.warn(`okx balance: ${(bal.reason as Error).message}`);
     if (pos.status === "fulfilled") this.posContracts = pos.value.filter((p) => p.instId === this.instId).reduce((s, p) => s + Number(p.pos || 0), 0);
     else console.warn(`okx positions: ${(pos.reason as Error).message}`);
+    // OKX drops the stop when the position closes, and a race may have left none: check it is still there.
+    if (this.stop && config.okx.emergencyStopPct > 0) {
+      const live = await this.api.signed<{ algoId: string }[]>("GET", "/api/v5/trade/orders-algo-pending", { ordType: "conditional", instType: "SWAP", instId: this.instId }).catch(() => null);
+      if (live && !live.some((o) => o.algoId === this.stop!.algoId)) this.stop = null;
+    }
+    if (config.okx.emergencyStopPct > 0 && !this.syncing) this.syncStop();
   }
 
   /** Reducing the position needs no new margin; adding needs notional / leverage, plus a fee's worth of headroom. */
@@ -210,13 +223,13 @@ export class OkxVenue implements Venue {
     return round(p * this.tick, this.tickDec);
   }
 
-  async send(block: number, side: Side, sizeMon: number, book: Book, cancel: OrderId[], capped: boolean): Promise<Quote> {
+  async send(block: number, side: Side, sizeMon: number, book: Book, cancel: OrderId[], capped: boolean, reduceOnly = false): Promise<Quote> {
     const price = this.quotePrice(side, book);
     if (!this.live) return { side, price, size: sizeMon, txHash: null, ref: null, gasMon: 0, cancel, status: "sim", orderId: null, capped };
     if (this.halted) throw new Error("okx: halted after repeated order rejections");
     const ref = newClOrdId();
     const quote: Quote = { side, price, size: sizeMon, txHash: null, ref, gasMon: 0, cancel, status: "sent", orderId: null, capped };
-    this.replace(block, quote).then((r) => this.done.push(r));
+    this.replace(block, quote, reduceOnly).then((r) => this.done.push(r));
     return quote;
   }
 
@@ -224,16 +237,86 @@ export class OkxVenue implements Venue {
     const out = this.done; this.done = []; return out;
   }
 
-  /** Cancel whatever of ours is still open on this swap, e.g. on shutdown. The position is left as it is. */
+  /**
+   * Cancel whatever of ours is still open on this swap, e.g. on shutdown. The position is left as it is,
+   * and so is the emergency stop covering it (OKX drops that once the position closes).
+   */
   async shutdown() {
     if (!this.live) return;
     await this.cancelLeftovers().catch((e) => console.warn(`okx cancel on shutdown: ${(e as Error).message}`));
     await this.refresh().catch(() => {});
-    if (this.posContracts !== 0) console.warn(`okx: position left open: ${this.posContracts * this.ctVal} ${this.base} on ${this.instId}. Close it on OKX if you do not want to hold it.`);
+    if (this.posContracts !== 0) {
+      const stop = this.stop ? ` The emergency stop stays on OKX: ${this.stop.side} at mark ${this.stop.trigger}.` : "";
+      console.warn(`okx: position left open: ${this.posContracts * this.ctVal} ${this.base} on ${this.instId}. Close it on OKX if you do not want to hold it.${stop}`);
+    }
+  }
+
+  /** Keep the emergency stop covering the position the Trader now holds. Coalesces bursts; never throws. */
+  protect(position: { mon: number; entry: number | null }) {
+    if (!this.live || !(config.okx.emergencyStopPct > 0)) return;
+    this.wanted = position;
+    if (!this.syncing) this.syncStop();
+  }
+
+  /** Where the emergency stop for this position should sit, or null when flat. */
+  stopFor(p: { mon: number; entry: number | null }): { side: Side; trigger: number } | null {
+    if (p.mon === 0 || !p.entry) return null;
+    const pct = config.okx.emergencyStopPct / 100;
+    const long = p.mon > 0;
+    const px = p.entry * (long ? 1 - pct : 1 + pct);
+    return { side: long ? "sell" : "buy", trigger: round(Math.round(px / this.tick) * this.tick, this.tickDec) };
+  }
+
+  /**
+   * Cancel the stop if the position went flat, flipped, or its entry moved it by more than 0.5% of price,
+   * then place one for the current position: conditional, closeFraction 1 (the whole position), reduce-only,
+   * market on trigger, triggered by the mark price, dropped by OKX when the position closes.
+   */
+  private async syncStop() {
+    this.syncing = true;
+    try {
+      for (let pass = 0; pass < 3; pass++) {
+        const target = this.stopFor(this.wanted);
+        const cur = this.stop;
+        const moved = cur && target && Math.abs(cur.trigger - target.trigger) / target.trigger > 0.005;
+        if (cur && (!target || cur.side !== target.side || moved)) {
+          await this.api.signed("POST", "/api/v5/trade/cancel-algos", [{ algoId: cur.algoId, instId: this.instId }]).catch(() => {}); // gone already is fine
+          this.stop = null;
+        }
+        if (target && !this.stop) {
+          const [r] = await this.api.signed<{ algoId: string }[]>("POST", "/api/v5/trade/order-algo", {
+            instId: this.instId, tdMode: config.okx.marginMode, side: target.side, posSide: "net", ordType: "conditional",
+            closeFraction: "1", reduceOnly: true, cxlOnClosePos: true,
+            slTriggerPx: target.trigger.toFixed(this.tickDec), slOrdPx: "-1", slTriggerPxType: "mark",
+            algoClOrdId: newClOrdId(STOP_PREFIX),
+          });
+          this.stop = { algoId: r!.algoId, ...target };
+          console.log(`okx emergency stop: ${target.side} the whole position at mark ${target.trigger}`);
+        }
+        // Done unless the position changed again while we were talking to OKX.
+        const again = this.stopFor(this.wanted);
+        if ((again?.side ?? null) === (this.stop?.side ?? null) && (!again || !this.stop || Math.abs(again.trigger - this.stop.trigger) / again.trigger <= 0.005)) break;
+      }
+    } catch (e) {
+      // Usually a race with the position (it flipped or closed under us): the next fill resyncs. Warn at most once a minute.
+      if (Date.now() - this.stopWarnedAt > 60_000) { this.stopWarnedAt = Date.now(); console.warn(`okx emergency stop: ${(e as Error).message}`); }
+    } finally {
+      this.syncing = false;
+    }
+  }
+
+  /** Our emergency stops left from an earlier run. Startup refuses an open position, so any found are stale. */
+  private async cancelLeftoverStops() {
+    const open = await this.api.signed<{ algoId: string; algoClOrdId: string }[]>("GET", "/api/v5/trade/orders-algo-pending", { ordType: "conditional", instType: "SWAP", instId: this.instId }).catch(() => []);
+    const ours = open.filter((o) => o.algoClOrdId?.startsWith(STOP_PREFIX));
+    if (ours.length) {
+      await this.api.signed("POST", "/api/v5/trade/cancel-algos", ours.map((o) => ({ algoId: o.algoId, instId: this.instId }))).catch(() => {});
+      console.log(`okx: cancelled ${ours.length} emergency stop(s) left from an earlier run`);
+    }
   }
 
   /** Cancel what rests, then post. Sequential so the margin the old order held is free for the new one. Always resolves. */
-  private async replace(block: number, quote: Quote): Promise<QuoteResult> {
+  private async replace(block: number, quote: Quote, reduceOnly: boolean): Promise<QuoteResult> {
     const canceled: OrderId[] = [];
     await Promise.all(quote.cancel.map(async (id) => {
       try {
@@ -249,6 +332,7 @@ export class OkxVenue implements Venue {
       const [r] = await this.api.signed<PlaceResult[]>("POST", "/api/v5/trade/order", {
         instId: this.instId, tdMode: config.okx.marginMode, side: quote.side, ordType: "post_only",
         px: quote.price.toFixed(this.tickDec), sz: String(round(quote.size / this.ctVal, 8)), clOrdId: quote.ref!,
+        ...(reduceOnly ? { reduceOnly: true } : {}),
       });
       // A post-only order that would cross is accepted, then cancelled by OKX (cancelSource 31). It shows
       // as placed here; the next block's cancel finds it gone (51400) and drops it.
