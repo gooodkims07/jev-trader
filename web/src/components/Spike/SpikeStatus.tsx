@@ -25,6 +25,34 @@ function Gauge({ label, pct, threshold }: { label: string; pct: number | null; t
   );
 }
 
+type Jev = SpikeSnapshot["open"][number];
+
+/**
+ * Where the price stands between the stop and the take-profit: the stop always on the left, the take-profit on
+ * the right (for a short too), a tick at the entry, and a dot at the price now.
+ */
+function ExitBar({ jev, px, t }: { jev: Jev; px: (n: number) => string; t: ReturnType<typeof useLang>["t"] }) {
+  const dir = jev.side === "buy" ? 1 : -1;
+  const now = jev.entry * (1 + (dir * jev.unrealizedPct) / 100);
+  const at = (p: number) => Math.min(1, Math.max(0, (dir * (p - jev.sl)) / (dir * (jev.tp - jev.sl)))) * 100;
+  const win = jev.unrealizedPct >= 0;
+  return (
+    <div className={styles.exitBar}>
+      <div className={styles.exitTrack}>
+        <div className={styles.exitLoss} style={{ width: `${at(jev.entry)}%` }} />
+        <div className={styles.exitGain} style={{ left: `${at(jev.entry)}%` }} />
+        <div className={styles.exitEntry} style={{ left: `${at(jev.entry)}%` }} />
+        <div className={styles.exitNow} style={{ left: `${at(now)}%`, background: win ? "var(--pnl-pos)" : "var(--pnl-neg)" }} title={`${t("bar.now")} ${px(now)}`} />
+      </div>
+      <div className={styles.exitLabels}>
+        <span className={styles.neg}>{t("spike.sl")} {px(jev.sl)}</span>
+        <span>{t("spike.entry")} {px(jev.entry)}</span>
+        <span className={styles.pos}>{t("spike.tp")} {px(jev.tp)}</span>
+      </div>
+    </div>
+  );
+}
+
 /** Jev's open position (entry, take-profit, stop, time left), and how close the market is to the next spike. */
 export default function SpikeStatus({ snap, apiUrl }: { snap: SpikeSnapshot | null; apiUrl: string }) {
   const venue = useVenue();
@@ -53,13 +81,25 @@ export default function SpikeStatus({ snap, apiUrl }: { snap: SpikeSnapshot | nu
       <section className={styles.section}>
         <div className={styles.label}>
           <span>{t("spike.position")}</span>
-          {plan ? (
-            <span className={styles.labelNote}>
-              {t("spike.exits", { tp: plan.takeProfitRoePct, sl: plan.stopLossRoePct, lev: plan.leverage })}
-              {plan.sides && plan.sides !== "both" ? `, ${t(plan.sides === "long" ? "sides.1" : "sides.2")}` : ""}
-            </span>
-          ) : null}
         </div>
+        {plan ? (
+          // The plan at a glance: exits (ROE, with the price move they mean), leverage, sides, hold limit.
+          <div className={styles.chips}>
+            <span className={`${styles.chip} ${styles.chipTp}`}>
+              {t("chip.tp", { roe: plan.takeProfitRoePct })}
+              <small>{t("chip.price", { sign: "+", pct: +plan.takeProfitPct.toFixed(2) })}</small>
+            </span>
+            <span className={`${styles.chip} ${styles.chipSl}`}>
+              {t("chip.sl", { roe: plan.stopLossRoePct })}
+              <small>{t("chip.price", { sign: "-", pct: +plan.stopLossPct.toFixed(2) })}</small>
+            </span>
+            <span className={styles.chip}>{t("chip.lev", { n: plan.leverage })}</span>
+            <span className={`${styles.chip} ${plan.sides === "long" ? styles.chipLong : plan.sides === "short" ? styles.chipShort : ""}`}>
+              {t(plan.sides === "long" ? "sides.1" : plan.sides === "short" ? "sides.2" : "sides.0")}
+            </span>
+            <span className={styles.chip}>{t("chip.hold", { n: plan.maxHoldMin })}</span>
+          </div>
+        ) : null}
         {jev ? (
           <>
             <div className={styles.posHead}>
@@ -71,14 +111,9 @@ export default function SpikeStatus({ snap, apiUrl }: { snap: SpikeSnapshot | nu
                 ROE {sign(jev.unrealizedRoePct, 1)}%{jev.unrealizedUsd !== undefined ? ` (${sign(jev.unrealizedUsd, 3)} USDT)` : ""}
               </span>
             </div>
-            <div className={styles.kv}>
-              <div><div className={styles.k}>{t("spike.entry")}</div><div className={styles.v}>{px(jev.entry)}</div></div>
-              <div><div className={styles.k}>{t("spike.tp")}</div><div className={styles.v}>{px(jev.tp)}</div></div>
-              <div><div className={styles.k}>{t("spike.sl")}</div><div className={styles.v}>{px(jev.sl)}</div></div>
-              <div>
-                <div className={styles.k}>{t("spike.timeLeft")}</div>
-                <div className={styles.v}>{plan ? t("spike.min", { n: Math.max(0, Math.round(plan.maxHoldMin - jev.heldMin)) }) : "-"}</div>
-              </div>
+            <ExitBar jev={jev} px={px} t={t} />
+            <div className={styles.timeLeft}>
+              {t("spike.timeLeft")} <b>{plan ? t("spike.min", { n: Math.max(0, Math.round(plan.maxHoldMin - jev.heldMin)) }) : "-"}</b>
             </div>
           </>
         ) : (

@@ -251,3 +251,125 @@
 .miniButton:hover {
   border-color: var(--muted-2);
 }
+
+/* ---- plan chips (exits, leverage, sides, hold) ---- */
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: -2px 0 12px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: var(--track);
+  color: var(--ink-2);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.chip small {
+  font-size: 10.5px;
+  font-weight: 500;
+  opacity: 0.75;
+}
+
+.chipTp {
+  background: var(--buy-bar-dim);
+  color: var(--buy-ink);
+}
+
+.chipSl {
+  background: var(--sell-bar-dim);
+  color: var(--sell-ink);
+}
+
+.chipLong {
+  background: var(--buy-ink);
+  color: #fff;
+}
+
+.chipShort {
+  background: var(--sell-ink);
+  color: #fff;
+}
+
+/* ---- stop / entry / take-profit bar ---- */
+
+.exitBar {
+  margin-top: 6px;
+}
+
+.exitTrack {
+  position: relative;
+  height: 10px;
+  border-radius: 999px;
+  overflow: visible;
+  background: var(--track);
+}
+
+.exitLoss,
+.exitGain {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+}
+
+.exitLoss {
+  left: 0;
+  background: var(--sell-bar-dim);
+  border-radius: 999px 0 0 999px;
+}
+
+.exitGain {
+  right: 0;
+  background: var(--buy-bar-dim);
+  border-radius: 0 999px 999px 0;
+}
+
+.exitEntry {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--ink-2);
+}
+
+.exitNow {
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  margin: -6px 0 0 -6px;
+  border-radius: 50%;
+  border: 2px solid var(--bg);
+  transition: left 0.4s;
+}
+
+.exitLabels {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  font-family: var(--font-mono), "Geist Mono", ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.timeLeft {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.timeLeft b {
+  color: var(--ink-2);
+  font-weight: 600;
+}
