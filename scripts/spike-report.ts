@@ -1,7 +1,9 @@
 // Compare Jev with the fade and follow rules on the spike dry run: bun run scripts/spike-report.ts [data/spike.jsonl]
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
-const rows = readFileSync(process.argv[2] ?? "data/spike.jsonl", "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l));
+const file = process.argv[2] ?? "data/spike.jsonl";
+if (!existsSync(file)) { console.log(`no spikes yet (${file} is written on the first one)`); process.exit(0); }
+const rows = readFileSync(file, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l));
 const spikes = rows.filter((r) => r.type === "spike");
 const trades = rows.filter((r) => r.type === "trade");
 if (!spikes.length) { console.log("no spikes yet"); process.exit(0); }
