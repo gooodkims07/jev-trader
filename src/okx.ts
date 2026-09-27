@@ -17,7 +17,7 @@
  */
 import { config } from "./config";
 import { OkxApi, OkxError, newClOrdId, okxWs, stepDecimals } from "./okx-api";
-import { bookFromLevels, summarize, type InstrumentChoice, type Book, type MakerFill, type OrderId, type Quote, type QuoteResult, type Side, type TradePrint, type TradeSource, type TradeSummary, type Venue, type VenueInfo } from "./venue";
+import { bookFromLevels, summarize, type InstrumentChoice, type MarketExec, type MarketFill, type Book, type MakerFill, type OrderId, type Quote, type QuoteResult, type Side, type TradePrint, type TradeSource, type TradeSummary, type Venue, type VenueInfo } from "./venue";
 
 const RING = 500;
 const WARMUP_TRADES = 500;
@@ -315,9 +315,9 @@ export class OkxVenue implements Venue {
     }
   }
 
-  /** Our emergency stops left from an earlier run. Startup refuses an open position, so any found are stale. */
+  /** Our emergency stops and exit OCOs left from an earlier run. Startup refuses an open position, so any found are stale. */
   private async cancelLeftoverStops() {
-    const open = await this.api.signed<{ algoId: string; algoClOrdId: string }[]>("GET", "/api/v5/trade/orders-algo-pending", { ordType: "conditional", instType: "SWAP", instId: this.instId }).catch(() => []);
+    const open = await this.api.signed<{ algoId: string; algoClOrdId: string }[]>("GET", "/api/v5/trade/orders-algo-pending", { ordType: "conditional,oco", instType: "SWAP", instId: this.instId }).catch(() => []);
     const ours = open.filter((o) => o.algoClOrdId?.startsWith(STOP_PREFIX));
     if (ours.length) {
       await this.api.signed("POST", "/api/v5/trade/cancel-algos", ours.map((o) => ({ algoId: o.algoId, instId: this.instId }))).catch(() => {});
@@ -371,6 +371,76 @@ export class OkxVenue implements Venue {
   }
 
   extras() { return { fundingRatePct: this.fundingRatePct }; }
+
+  /** Live only: market orders, the position, fills, and exchange-side exits. See MarketExec. */
+  get exec(): MarketExec | undefined {
+    if (!this.live) return undefined;
+    return {
+      marketOrder: (side, size, reduceOnly) => this.marketOrder(side, size, reduceOnly),
+      positionNow: () => this.positionNow(),
+      fillsSince: (since, side) => this.fillsSince(since, side),
+      setExits: (p) => this.setExits(p),
+    };
+  }
+
+  private exitAlgo: string | null = null;
+
+  /** Market order, then read it back until filled (a market order on a live book fills at once). */
+  private async marketOrder(side: Side, size: number, reduceOnly: boolean): Promise<MarketFill> {
+    const [r] = await this.api.signed<PlaceResult[]>("POST", "/api/v5/trade/order", {
+      instId: this.instId, tdMode: config.okx.marginMode, side, ordType: "market",
+      sz: String(round(size / this.ctVal, 8)), clOrdId: newClOrdId(), ...(reduceOnly ? { reduceOnly: true } : {}),
+    });
+    for (let i = 0; i < 30; i++) {
+      const [o] = await this.api.signed<{ state: string; avgPx: string; accFillSz: string; fee: string }[]>("GET", "/api/v5/trade/order", { instId: this.instId, ordId: r!.ordId });
+      const filled = Number(o?.accFillSz ?? 0) * this.ctVal;
+      if (o && (o.state === "filled" || (o.state === "canceled" && filled > 0))) {
+        this.posContracts += (side === "buy" ? 1 : -1) * (filled / this.ctVal);
+        return { ordId: r!.ordId, avgPx: Number(o.avgPx), size: round(filled, 10), fee: -Number(o.fee || 0) };
+      }
+      if (o && o.state === "canceled") throw new Error(`okx market ${side} ${size} ${this.base}: canceled unfilled`);
+      await Bun.sleep(100);
+    }
+    throw new Error(`okx market ${side} ${size} ${this.base}: not filled after 3 s (order ${r!.ordId})`);
+  }
+
+  private async positionNow() {
+    const ps = await this.api.signed<{ instId: string; pos: string; avgPx: string }[]>("GET", "/api/v5/account/positions", { instId: this.instId });
+    const p = ps.find((x) => x.instId === this.instId && Number(x.pos) !== 0);
+    this.posContracts = p ? Number(p.pos) : 0;
+    return { size: round(this.posContracts * this.ctVal, 10), avgPx: p ? Number(p.avgPx) : 0 };
+  }
+
+  private async fillsSince(since: number, side: Side) {
+    const fs = await this.api.signed<{ side: Side; fillPx: string; fillSz: string; fee: string; ts: string }[]>("GET", "/api/v5/trade/fills", { instType: "SWAP", instId: this.instId, limit: "100" });
+    return fs.filter((f) => f.side === side && Number(f.ts) >= since)
+      .map((f) => ({ px: Number(f.fillPx), size: Number(f.fillSz) * this.ctVal, fee: -Number(f.fee || 0), ts: Number(f.ts) }))
+      .sort((a, b) => a.ts - b.ts);
+  }
+
+  /** One OCO (take-profit and stop, market on trigger, last price) closing the whole position; replaces the last. */
+  private async setExits(p: { side: Side; tp: number; sl: number } | null): Promise<boolean> {
+    if (this.exitAlgo) {
+      await this.api.signed("POST", "/api/v5/trade/cancel-algos", [{ algoId: this.exitAlgo, instId: this.instId }]).catch(() => {});
+      this.exitAlgo = null;
+    }
+    if (!p) return true;
+    try {
+      const [r] = await this.api.signed<{ algoId: string }[]>("POST", "/api/v5/trade/order-algo", {
+        instId: this.instId, tdMode: config.okx.marginMode, side: p.side === "buy" ? "sell" : "buy", posSide: "net", ordType: "oco",
+        closeFraction: "1", reduceOnly: true, cxlOnClosePos: true,
+        tpTriggerPx: p.tp.toFixed(this.tickDec), tpOrdPx: "-1", tpTriggerPxType: "last",
+        slTriggerPx: p.sl.toFixed(this.tickDec), slOrdPx: "-1", slTriggerPxType: "last",
+        algoClOrdId: newClOrdId(STOP_PREFIX),
+      });
+      this.exitAlgo = r!.algoId;
+      console.log(`okx exits on the exchange: take-profit ${p.tp.toFixed(this.tickDec)} / stop ${p.sl.toFixed(this.tickDec)}`);
+      return true;
+    } catch (e) {
+      console.warn(`okx exits not placed (${(e as Error).message}); the bot watches them itself`);
+      return false;
+    }
+  }
 
   private instCache: { at: number; list: InstrumentChoice[] } | null = null;
 

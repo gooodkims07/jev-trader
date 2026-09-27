@@ -99,6 +99,28 @@ export interface TradeSource {
   drainFills(): MakerFill[];
 }
 
+/** A filled market order: average price, size filled (base asset), and the fee paid (quote currency). */
+export interface MarketFill { ordId: string; avgPx: number; size: number; fee: number }
+
+/**
+ * Taker execution for strategies that trade at market (the spike strategy, live). OKX implements it.
+ * Every size is in the base asset; the venue converts to contracts.
+ */
+export interface MarketExec {
+  /** A market order, resolved once filled (or rejects). reduceOnly: may only shrink the position. */
+  marketOrder(side: Side, size: number, reduceOnly: boolean): Promise<MarketFill>;
+  /** The exchange's position now: signed size (base asset, + long) and average entry. */
+  positionNow(): Promise<{ size: number; avgPx: number }>;
+  /** Our fills on `side` since `sinceMs`, oldest first: price, size (base), fee (quote, cost). */
+  fillsSince(sinceMs: number, side: Side): Promise<{ px: number; size: number; fee: number; ts: number }[]>;
+  /**
+   * The exchange-side exits for the whole position (take-profit and stop as one OCO, market on trigger), or
+   * none. Replaces whatever we had. Resolves true if placed (false if the exchange refused, e.g. a trigger
+   * already passed): then the strategy must watch the levels itself.
+   */
+  setExits(p: { side: Side; tp: number; sl: number } | null): Promise<boolean>;
+}
+
 /** A coin the settings panel offers. Sizes are in the coin: `lot` is the order step, `min` the smallest order. */
 export interface InstrumentChoice { instId: string; base: string; last: number; volUsd24h: number; lot: number; min: number; tickSz: string }
 
@@ -161,6 +183,8 @@ export interface Venue {
    * size in the base asset, average entry). Optional; OKX places its emergency stop here.
    */
   protect?(position: { mon: number; entry: number | null }): void;
+  /** Market-order execution, live only (OKX). */
+  exec?: MarketExec;
   /** Coins this venue can trade instead, for the settings panel (OKX: USDT perpetuals by 24 h volume). */
   instruments?(): Promise<InstrumentChoice[]>;
   /** Why the coin cannot be switched right now (e.g. a live position is open), or null. */

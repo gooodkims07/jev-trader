@@ -23,5 +23,19 @@ export async function runSpike(venue: Venue) {
     else if (Date.now() - lastBeat > 300_000) { lastBeat = Date.now(); console.log(`#${e.block} ${px(e.mid)} waiting for a spike · position ${e.position.side} · pnl ${e.totals.pnlUsd} ${info.quoteCcy}`); }
   }, (block, fill) => server.broadcastFill(block, fill));
   console.log(`jev-trader · ${info.label} · model=${model.name} · ${info.market} · ${venue.live ? "LIVE" : "DRY RUN"} · ${trader.describe()} · :${config.port}`);
+
+  // Leaving never strands a live position: close Jev's at market, cancel our orders and exits, then exit.
+  // Exit 0 (not 75), so scripts/run.sh stops too. A session stop or take-profit ends the run the same way.
+  let stopping = false;
+  const stop = async (why: string) => {
+    if (stopping) process.exit(0);
+    stopping = true;
+    console.log(`${why}: closing Jev's position and stopping`);
+    await trader.shutdown().catch((e) => console.error(`shutdown: ${(e as Error).message}`));
+    await venue.shutdown?.().catch(() => {});
+    process.exit(0);
+  };
+  for (const sig of ["SIGINT", "SIGTERM"] as const) process.on(sig, () => void stop(sig));
+  trader.onHalt = (reason) => void stop(reason);
   venue.startClock((block) => trader.onBlock(block));
 }

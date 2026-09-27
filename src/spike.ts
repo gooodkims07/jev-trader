@@ -19,7 +19,7 @@ import { typeSafeAi } from "@ai-sdk/typesafe-ai";
 import { config } from "./config";
 import type { Action, Decision } from "./model";
 import type { BlockEvent, Totals } from "./trader";
-import type { Book, Fill, Quote, Side, Venue, VenueInfo } from "./venue";
+import type { Book, Fill, MarketExec, Quote, Side, Venue, VenueInfo } from "./venue";
 
 const round = (x: number, d: number) => Math.round(x * 10 ** d) / 10 ** d;
 
@@ -119,8 +119,12 @@ export class MockSpikeModel implements SpikeModel {
 export const createSpikeModel = (v: VenueInfo): SpikeModel => (config.model === "jev" ? new JevSpikeModel(v) : new MockSpikeModel());
 
 type Who = "jev" | "fade" | "follow";
-/** entry is the average over the first order and any adds; tp and sl follow it. */
-interface Open { who: Who; side: Side; entry: number; size: number; adds: number; openedAt: number; spikeBlock: number; tp: number; sl: number }
+/**
+ * entry is the average over the first order and any adds; tp and sl follow it. Live (Jev only): openedTs is
+ * when the first order filled, and exitsOnExchange says whether OKX holds the take-profit / stop OCO (else the
+ * bot watches the levels itself).
+ */
+interface Open { who: Who; side: Side; entry: number; size: number; adds: number; openedAt: number; spikeBlock: number; tp: number; sl: number; openedTs?: number; exitsOnExchange?: boolean; entryFees?: number }
 /** What a spike did to one strategy's position. */
 type Effect = "open" | "add" | "reverse" | "hold" | "out" | "not-asked";
 
@@ -164,13 +168,19 @@ export class SpikeTrader {
   private get tpPct() { return config.spike.takeProfitRoePct / config.okx.leverage; }
   private get slPct() { return config.spike.stopLossRoePct / config.okx.leverage; }
 
+  /** Live: Jev's orders go to the exchange through this. Dry run: undefined, everything is simulated. */
+  private readonly exec: MarketExec | undefined;
+  private halted = false;
+  private posCheckedAt = 0;
+
   constructor(
     private venue: Venue,
     private model: SpikeModel,
     private onEvent: (e: BlockEvent, note?: string) => void,
     private onFill: (block: number, fill: Fill) => void = () => {},
   ) {
-    if (venue.live) throw new Error("STRATEGY=spike is dry run only for now: set DRY_RUN=true");
+    this.exec = venue.live ? venue.exec : undefined;
+    if (venue.live && !this.exec) throw new Error("STRATEGY=spike live needs market execution (OKX)");
     mkdirSync("data", { recursive: true });
     // Only this coin's history: rows from before coins were recorded were all XRP-USDT-SWAP.
     const mine = (r: { instId?: string }) => (r.instId ?? "XRP-USDT-SWAP") === venue.info.market;
@@ -219,7 +229,10 @@ export class SpikeTrader {
   }
 
   async onBlock(block: number) {
+    if (this.halted) return;
     this.totals.blocks++;
+    // The spike strategy reads prints through summary(); drain the push buffers so they do not grow.
+    this.venue.trades.drainPrints(); this.venue.trades.drainFills();
     if (Date.now() - this.refreshedAt > 60_000) { this.refreshedAt = Date.now(); this.venue.refresh().catch(() => {}); }
     if (this.busy) { this.totals.lateBlocks++; return; }
     this.busy = true;
@@ -234,10 +247,27 @@ export class SpikeTrader {
 
       // Exits first, for Jev and the shadows.
       for (const o of [...this.open.values()]) {
+        if (o.who === "jev" && this.exec) {
+          const res = await this.liveExit(o, book, block);
+          if (res) { ({ quote, fill } = res); note = `EXIT ${res.reason} ${res.pnlPct >= 0 ? "+" : ""}${res.pnlPct.toFixed(3)}% (ROE ${(res.pnlPct * config.okx.leverage).toFixed(1)}%, ${res.pnlUsd >= 0 ? "+" : ""}${res.pnlUsd.toFixed(4)} ${this.venue.info.quoteCcy})`; }
+          continue;
+        }
         const r = this.exitReason(o, book, block);
         if (!r) continue;
         const res = this.close(o, book, block, r);
         if (o.who === "jev") { ({ quote, fill } = res); note = `EXIT ${r} ${res.pnlPct >= 0 ? "+" : ""}${res.pnlPct.toFixed(3)}% (ROE ${(res.pnlPct * config.okx.leverage).toFixed(1)}%)`; }
+      }
+
+      // Live: the session stop and take-profit (RISK_SESSION_*) close Jev's position and end the run.
+      const halt = this.exec ? this.sessionLimit(book) : null;
+      if (halt) {
+        const o = this.open.get("jev");
+        if (o) { const res = await this.liveClose(o, block, halt); ({ quote, fill } = res); }
+        this.halted = true;
+        note = `${halt}: session P&L ${this.sessionPnl(book).toFixed(4)} ${this.venue.info.quoteCcy}, position closed, stopping`;
+        this.emit(block, book, null, quote, fill, note);
+        this.onHalt(halt);
+        return;
       }
 
       const spike = block >= this.cooldownUntil ? this.detect(book) : null;
@@ -254,7 +284,8 @@ export class SpikeTrader {
           decision = await this.model.decide(this.state(book, spike));
           this.totals.decisions++;
           this.totals.jevUsd += (decision.inputTokens / 1e6) * config.jevUsdPerMTok;
-          const r = this.act("jev", decision.action === "hold" ? null : decision.action, book, block);
+          const want = decision.action === "hold" ? null : decision.action;
+          const r = this.exec ? await this.liveAct(want, book, block) : this.act("jev", want, book, block);
           effect = r.effect;
           if (r.quote) ({ quote, fill } = r);
           if (effect === "out" || effect === "hold") this.totals.skips++;
@@ -281,11 +312,146 @@ export class SpikeTrader {
     return null;
   }
 
-  /** Before the coin changes: close every simulated position at the touch (reason "switch") so it is recorded. */
+  /** Before the coin changes: close every position (Jev's at market when live) with reason "switch" so it is recorded. */
   async closeAllForSwitch() {
+    await this.closeAll("switch");
+  }
+
+  /** On shutdown: never leave a live position behind. Closes Jev's at market (reason "shutdown") and the shadows. */
+  async shutdown() {
+    this.halted = true;
+    await this.closeAll("shutdown");
+  }
+
+  private async closeAll(reason: string) {
     if (!this.open.size) return;
     const book = await this.venue.readBook();
-    for (const o of [...this.open.values()]) this.close(o, book, this.lastBlock, "switch");
+    for (const o of [...this.open.values()]) {
+      if (o.who === "jev" && this.exec) await this.liveClose(o, this.lastBlock, reason).catch((e) => console.error(`close on ${reason} failed: ${(e as Error).message}. Close it on OKX.`));
+      else this.close(o, book, this.lastBlock, reason);
+    }
+  }
+
+  // ---- live execution (Jev only; the fade and follow shadows stay simulated) ----
+
+  /** P&L of this run for Jev, at mid: closed trades (fees included) and the open position. */
+  private sessionPnl(book: Book) {
+    const o = this.open.get("jev");
+    return this.realized + (o ? (o.side === "buy" ? 1 : -1) * (book.mid - o.entry) * o.size : 0);
+  }
+
+  private sessionLimit(book: Book): string | null {
+    const r = config.risk, pnl = this.sessionPnl(book);
+    if (r.sessionStopLoss > 0 && pnl <= -r.sessionStopLoss) return "session-stop";
+    if (r.sessionTakeProfit > 0 && pnl >= r.sessionTakeProfit) return "session-take";
+    return null;
+  }
+
+  /** act() for Jev when live: the same decisions, sent to the exchange. */
+  private async liveAct(want: Side | null, book: Book, block: number): Promise<{ effect: Effect; quote: Quote | null; fill: Fill | null; exitPct?: number }> {
+    const o = this.open.get("jev");
+    if (!want) return { effect: o ? "hold" : "out", quote: null, fill: null };
+    const affordable = this.venue.canAfford(want, config.tradeSize, book);
+    if (!o) {
+      if (!affordable) { console.warn("spike: not enough margin to open"); return { effect: "out", quote: null, fill: null }; }
+      return { effect: "open", ...(await this.liveOpen(want, block)) };
+    }
+    if (o.side === want) {
+      if (o.adds >= config.spike.maxAdds) return { effect: "hold", quote: null, fill: null };
+      if (!affordable) { console.warn("spike: not enough margin to add"); return { effect: "hold", quote: null, fill: null }; }
+      return { effect: "add", ...(await this.liveAdd(o, block)) };
+    }
+    if (!config.spike.allowReverse) return { effect: "hold", quote: null, fill: null };
+    const exitPct = (await this.liveClose(o, block, "reverse")).pnlPct;
+    return { effect: "reverse", ...(await this.liveOpen(want, block)), exitPct };
+  }
+
+  private async liveOpen(side: Side, block: number) {
+    const r = await this.exec!.marketOrder(side, config.tradeSize, false);
+    const dir = side === "buy" ? 1 : -1;
+    const o: Open = { who: "jev", side, entry: r.avgPx, size: r.size, adds: 0, openedAt: block, spikeBlock: block, openedTs: Date.now() - 1000, tp: r.avgPx * (1 + (dir * this.tpPct) / 100), sl: r.avgPx * (1 - (dir * this.slPct) / 100) };
+    o.entryFees = r.fee;
+    this.open.set("jev", o);
+    this.feesUsd += r.fee; this.realized -= r.fee;
+    o.exitsOnExchange = await this.exec!.setExits({ side, tp: o.tp, sl: o.sl });
+    return this.orderEvent(side, r.avgPx, r.size, r.fee, r.ordId, block);
+  }
+
+  private async liveAdd(o: Open, block: number) {
+    const r = await this.exec!.marketOrder(o.side, config.tradeSize, false);
+    const pos = await this.exec!.positionNow();
+    const dir = o.side === "buy" ? 1 : -1;
+    o.entry = pos.avgPx || (o.entry * o.size + r.avgPx * r.size) / (o.size + r.size);
+    o.size = Math.abs(pos.size) || o.size + r.size;
+    o.adds++;
+    o.entryFees = (o.entryFees ?? 0) + r.fee;
+    o.tp = o.entry * (1 + (dir * this.tpPct) / 100);
+    o.sl = o.entry * (1 - (dir * this.slPct) / 100);
+    this.feesUsd += r.fee; this.realized -= r.fee;
+    o.exitsOnExchange = await this.exec!.setExits({ side: o.side, tp: o.tp, sl: o.sl });
+    return this.orderEvent(o.side, r.avgPx, r.size, r.fee, r.ordId, block);
+  }
+
+  /** Close Jev's position at market (reduce-only), taking the exits off the exchange first. */
+  private async liveClose(o: Open, block: number, reason: string) {
+    await this.exec!.setExits(null);
+    const side: Side = o.side === "buy" ? "sell" : "buy";
+    const r = await this.exec!.marketOrder(side, o.size, true);
+    const res = this.record(o, r.avgPx, r.fee, reason, block);
+    return { ...res, ...this.orderEvent(side, r.avgPx, r.size, r.fee, r.ordId, block, reason) };
+  }
+
+  /**
+   * Each tick while Jev holds a position: the exchange may have closed it (the OCO triggered, or by hand), so
+   * check the position every 2 s and book the exit from the actual fills. Then the time limit, and the
+   * take-profit / stop when they are not on the exchange.
+   */
+  private async liveExit(o: Open, book: Book, block: number) {
+    if (block - this.posCheckedAt >= 2) {
+      this.posCheckedAt = block;
+      const pos = await this.exec!.positionNow();
+      if (pos.size === 0) {
+        const closeSide: Side = o.side === "buy" ? "sell" : "buy";
+        const fills = await this.exec!.fillsSince(o.openedTs ?? 0, closeSide);
+        const qty = fills.reduce((a, f) => a + f.size, 0);
+        const px = qty ? fills.reduce((a, f) => a + f.px * f.size, 0) / qty : book.mid;
+        const fee = fills.reduce((a, f) => a + f.fee, 0);
+        const reason = Math.abs(px - o.tp) <= Math.abs(px - o.sl) ? "take-profit" : "stop-loss";
+        this.open.delete("jev");
+        const res = this.record(o, px, fee, reason, block, true);
+        return { ...res, reason, ...this.orderEvent(closeSide, px, o.size, fee, "exchange", block, reason) };
+      }
+    }
+    const r = this.exitReason(o, book, block);
+    if (!r || (r !== "time" && o.exitsOnExchange)) return null;
+    const res = await this.liveClose(o, block, r);
+    return { ...res, reason: r };
+  }
+
+  /** Book a closed Jev position at `exit` with the exit fee: the trade row, realized P&L and fees. */
+  private record(o: Open, exit: number, exitFee: number, reason: string, block: number, alreadyRemoved = false) {
+    if (!alreadyRemoved) this.open.delete(o.who);
+    const dir = o.side === "buy" ? 1 : -1;
+    const gross = dir * (exit - o.entry) * o.size;
+    const entryFees = o.entryFees ?? config.spike.takerFeeRate * o.entry * o.size; // what the exchange charged on entry
+    const pnlUsd = gross - exitFee - entryFees;
+    const pnlPct = (pnlUsd / (o.entry * o.size)) * 100;
+    this.closed[o.who]++;
+    const row: TradeRow = { type: "trade", instId: this.venue.info.market, who: o.who, side: o.side, spikeBlock: o.spikeBlock, openedAt: o.openedAt, closedAt: block, heldMin: round((block - o.openedAt) / 60, 1), entry: o.entry, exit, size: o.size, adds: o.adds, reason, pnlPct: round(pnlPct, 4), roePct: round(pnlPct * config.okx.leverage, 2), pnlUsd: round(pnlUsd, 5), ts: Date.now() };
+    this.tradeRows.push(row);
+    this.log(row);
+    this.feesUsd += exitFee;
+    this.realized += gross - exitFee;
+    return { pnlPct, pnlUsd };
+  }
+
+  /** The block event's quote and fill for a live order. */
+  private orderEvent(side: Side, price: number, size: number, fee: number, ordId: string, block: number, reason?: string) {
+    this.totals.quotes++; this.totals.fills++;
+    const close = reason ? (reason === "take-profit" || reason === "session-take" ? "position-take" : "position-stop") : undefined;
+    const quote: Quote = { side, price, size, txHash: null, ref: null, gasMon: 0, cancel: [], status: "placed", orderId: ordId, capped: false, ...(close ? { close } : {}) };
+    const fill: Fill = { side, size, price, txHash: null, orderId: ordId, simulated: false, fee };
+    return { quote, fill };
   }
 
   /**
