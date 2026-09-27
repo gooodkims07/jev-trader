@@ -130,8 +130,9 @@ type Effect = "open" | "add" | "reverse" | "hold" | "out" | "not-asked";
 
 const LOG = "data/spike.jsonl";
 /** A row of data/spike.jsonl. */
-interface SpikeRow { type: "spike"; instId?: string; block: number; ts: number; window: string; direction: "up" | "down"; movePct: number; mid: number; asked: boolean; effect?: Effect; jev: { action: Action; probabilities: Record<Action, number>; latencyMs: number } | null }
-interface TradeRow { type: "trade"; instId?: string; who: Who; side: Side; spikeBlock: number; openedAt: number; closedAt: number; heldMin: number; entry: number; exit: number; size?: number; adds?: number; reason: string; pnlPct: number; roePct: number; pnlUsd: number; ts?: number }
+/** live: recorded by a live run (absent on rows from before this was recorded: those were all dry runs). */
+interface SpikeRow { type: "spike"; instId?: string; live?: boolean; block: number; ts: number; window: string; direction: "up" | "down"; movePct: number; mid: number; asked: boolean; effect?: Effect; jev: { action: Action; probabilities: Record<Action, number>; latencyMs: number } | null }
+interface TradeRow { type: "trade"; instId?: string; live?: boolean; who: Who; side: Side; spikeBlock: number; openedAt: number; closedAt: number; heldMin: number; entry: number; exit: number; size?: number; adds?: number; reason: string; pnlPct: number; roePct: number; pnlUsd: number; ts?: number }
 
 /** What the dashboard's spike panels read from GET /spike. */
 export interface SpikeSnapshot {
@@ -182,8 +183,9 @@ export class SpikeTrader {
     this.exec = venue.live ? venue.exec : undefined;
     if (venue.live && !this.exec) throw new Error("STRATEGY=spike live needs market execution (OKX)");
     mkdirSync("data", { recursive: true });
-    // Only this coin's history: rows from before coins were recorded were all XRP-USDT-SWAP.
-    const mine = (r: { instId?: string }) => (r.instId ?? "XRP-USDT-SWAP") === venue.info.market;
+    // Only this coin's history, and only this mode's: a live run shows live records, a dry run dry-run ones.
+    // Rows from before coins were recorded were all XRP-USDT-SWAP; from before modes were, all dry runs.
+    const mine = (r: { instId?: string; live?: boolean }) => (r.instId ?? "XRP-USDT-SWAP") === venue.info.market && (r.live ?? false) === venue.live;
     if (existsSync(LOG)) for (const line of readFileSync(LOG, "utf8").split("\n")) {
       if (!line.trim()) continue;
       try { const r = JSON.parse(line); if (!mine(r)) continue; if (r.type === "spike") this.spikeRows.push(r); else if (r.type === "trade") this.tradeRows.push(r); } catch {}
@@ -292,7 +294,7 @@ export class SpikeTrader {
           const style = decision.action === "hold" ? "" : decision.action === followSide ? " (follow)" : " (fade)";
           note = `SPIKE ${spike.direction} ${spike.movePct.toFixed(2)}% in ${spike.window} -> ${decision.action === "hold" ? "stay out" : decision.action}${style}: ${effect}${r.exitPct !== undefined ? ` (closed ${r.exitPct >= 0 ? "+" : ""}${r.exitPct.toFixed(3)}%)` : ""}`;
         } else note = `SPIKE ${spike.direction} ${spike.movePct.toFixed(2)}% in ${spike.window} (in a position: not asked)`;
-        const row: SpikeRow = { type: "spike", instId: this.venue.info.market, block, ts: Date.now(), window: spike.window, direction: spike.direction, movePct: spike.movePct, mid: book.mid, asked: !!decision, effect, jev: decision && { action: decision.action, probabilities: decision.probabilities, latencyMs: Math.round(decision.latencyMs) } };
+        const row: SpikeRow = { type: "spike", instId: this.venue.info.market, live: this.venue.live, block, ts: Date.now(), window: spike.window, direction: spike.direction, movePct: spike.movePct, mid: book.mid, asked: !!decision, effect, jev: decision && { action: decision.action, probabilities: decision.probabilities, latencyMs: Math.round(decision.latencyMs) } };
         this.spikeRows.push(row);
         this.log(row);
       }
@@ -437,7 +439,7 @@ export class SpikeTrader {
     const pnlUsd = gross - exitFee - entryFees;
     const pnlPct = (pnlUsd / (o.entry * o.size)) * 100;
     this.closed[o.who]++;
-    const row: TradeRow = { type: "trade", instId: this.venue.info.market, who: o.who, side: o.side, spikeBlock: o.spikeBlock, openedAt: o.openedAt, closedAt: block, heldMin: round((block - o.openedAt) / 60, 1), entry: o.entry, exit, size: o.size, adds: o.adds, reason, pnlPct: round(pnlPct, 4), roePct: round(pnlPct * config.okx.leverage, 2), pnlUsd: round(pnlUsd, 5), ts: Date.now() };
+    const row: TradeRow = { type: "trade", instId: this.venue.info.market, live: this.venue.live, who: o.who, side: o.side, spikeBlock: o.spikeBlock, openedAt: o.openedAt, closedAt: block, heldMin: round((block - o.openedAt) / 60, 1), entry: o.entry, exit, size: o.size, adds: o.adds, reason, pnlPct: round(pnlPct, 4), roePct: round(pnlPct * config.okx.leverage, 2), pnlUsd: round(pnlUsd, 5), ts: Date.now() };
     this.tradeRows.push(row);
     this.log(row);
     this.feesUsd += exitFee;
@@ -568,7 +570,7 @@ export class SpikeTrader {
     const pnlUsd = dir * (exit - o.entry) * o.size - fees;
     const pnlPct = (pnlUsd / (o.entry * o.size)) * 100; // on notional, fees included
     this.closed[o.who]++;
-    const row: TradeRow = { type: "trade", instId: this.venue.info.market, who: o.who, side: o.side, spikeBlock: o.spikeBlock, openedAt: o.openedAt, closedAt: block, heldMin: round((block - o.openedAt) / 60, 1), entry: o.entry, exit, size: o.size, adds: o.adds, reason, pnlPct: round(pnlPct, 4), roePct: round(pnlPct * config.okx.leverage, 2), pnlUsd: round(pnlUsd, 5), ts: Date.now() };
+    const row: TradeRow = { type: "trade", instId: this.venue.info.market, live: this.venue.live, who: o.who, side: o.side, spikeBlock: o.spikeBlock, openedAt: o.openedAt, closedAt: block, heldMin: round((block - o.openedAt) / 60, 1), entry: o.entry, exit, size: o.size, adds: o.adds, reason, pnlPct: round(pnlPct, 4), roePct: round(pnlPct * config.okx.leverage, 2), pnlUsd: round(pnlUsd, 5), ts: Date.now() };
     this.tradeRows.push(row);
     this.log(row);
     if (o.who !== "jev") return { quote: null, fill: null, pnlPct };

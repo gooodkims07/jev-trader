@@ -1,9 +1,14 @@
 // Compare Jev with the fade and follow rules on the spike dry run: bun run scripts/spike-report.ts [data/spike.jsonl]
 import { existsSync, readFileSync } from "node:fs";
 
-const file = process.argv[2] ?? "data/spike.jsonl";
+const file = process.argv.slice(2).find((a) => a.endsWith(".jsonl")) ?? "data/spike.jsonl";
 if (!existsSync(file)) { console.log(`no spikes yet (${file} is written on the first one)`); process.exit(0); }
-const rows = readFileSync(file, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l));
+// Live and dry-run records are reported apart: pass --live for live ones (default: dry run), --coin XRP-USDT-SWAP to pick a coin.
+const wantLive = process.argv.includes("--live");
+const ci = process.argv.indexOf("--coin"), coin = ci > 0 ? process.argv[ci + 1] : null;
+const rows = readFileSync(file, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l))
+  .filter((r) => (r.live ?? false) === wantLive && (!coin || (r.instId ?? "XRP-USDT-SWAP") === coin));
+console.log(`${wantLive ? "LIVE" : "DRY RUN"} records${coin ? ` for ${coin}` : ""}`);
 const spikes = rows.filter((r) => r.type === "spike");
 const trades = rows.filter((r) => r.type === "trade");
 if (!spikes.length) { console.log("no spikes yet"); process.exit(0); }
@@ -11,7 +16,8 @@ if (!spikes.length) { console.log("no spikes yet"); process.exit(0); }
 const hours = (spikes.at(-1).ts - spikes[0].ts) / 3.6e6;
 const asked = spikes.filter((s) => s.asked);
 const count = (a: string) => asked.filter((s) => s.jev?.action === a).length;
-console.log(`${spikes.length} spikes over ${hours.toFixed(1)} h (${spikes.filter((s) => s.window === "1m").length} in 1m, ${spikes.filter((s) => s.window === "3m").length} in 3m) · Jev asked ${asked.length}: long ${count("buy")}, short ${count("sell")}, stayed out ${count("hold")}`);
+const byWindow = [...new Set(spikes.map((s) => s.window))].map((w) => `${spikes.filter((s) => s.window === w).length} in ${w}`).join(", ");
+console.log(`${spikes.length} spikes over ${hours.toFixed(1)} h (${byWindow}) · Jev asked ${asked.length}: long ${count("buy")}, short ${count("sell")}, stayed out ${count("hold")}`);
 
 // Did Jev fade or follow? Follow = long after an up spike, short after a down spike.
 const bySpike = new Map(spikes.map((s) => [s.block, s]));

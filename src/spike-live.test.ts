@@ -129,3 +129,15 @@ test("live: the session stop closes the position and halts; shutdown closes too"
     expect(g.ex.orders.at(-1)!.reduceOnly).toBe(true);
   } finally { reset(); }
 });
+
+test("live and dry-run records are kept apart: each mode loads only its own", async () => {
+  const f = liveVenue();
+  const live = new SpikeTrader(f.v, says("hold"), () => {});
+  const dryVenue = { ...(f.v as object), live: false, exec: undefined } as unknown as Venue;
+  const dry = new SpikeTrader(dryVenue, says("hold"), () => {});
+  const liveRows = readFileSync("data/spike.jsonl", "utf8").trim().split("\n").map((l) => JSON.parse(l));
+  expect(liveRows.every((r) => r.live === true)).toBe(true); // every row the live tests above wrote says so
+  expect(live.snapshot().spikes.length).toBeGreaterThan(0);
+  expect(dry.snapshot().spikes.length).toBe(0);
+  expect(dry.snapshot().stats.jev.trades).toBe(0);
+});
