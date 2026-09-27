@@ -148,6 +148,16 @@ export default function FlowChart({
 
     const byBlock = new Map(series.map((e) => [e.block, e]));
 
+    // Clock time under the strip, every 10 steps, pinned to block numbers so labels slide with the data
+    // instead of hopping. OKX only: the Kuru demo stays as it was.
+    const every = 10 * span;
+    const times =
+      venue.name === "kuru"
+        ? []
+        : series
+            .filter((e) => e.block % every === 0 && e.ts)
+            .map((e) => ({ key: e.block, x: fx(e.block), label: new Date(e.ts).toLocaleTimeString("en-GB", { hour12: false }) }));
+
     return {
       line,
       area,
@@ -157,6 +167,7 @@ export default function FlowChart({
       hotCell: cells[cells.length - 1],
       ticks,
       byBlock,
+      times,
       fx,
       fy,
       last,
@@ -297,6 +308,11 @@ export default function FlowChart({
                   rx="3"
                   fill={model.hotCell.fill}
                 />
+                {model.times.map((tm) => (
+                  <text key={`t${tm.key}`} className={styles.tick} x={tm.x} y={h - 6} textAnchor="middle">
+                    {tm.label}
+                  </text>
+                ))}
                 {model.cells.map((c, i) => (
                   <rect
                     key={c.key}
