@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLang, type Key } from "@/lib/i18n";
 import styles from "./Settings.module.css";
 
@@ -40,13 +40,19 @@ export default function SettingsPanel({ apiUrl, onClose }: { apiUrl: string; onC
     }
   }, [base, t]);
 
+  // Load once when the panel opens. The page re-renders every tick and hands us a new onClose each time;
+  // reloading on that would overwrite what the viewer is typing, so onClose goes through a ref.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const loadRef = useRef(load);
+  loadRef.current = load;
   useEffect(() => {
-    load();
+    loadRef.current();
     try { setToken(localStorage.getItem(TOKEN) ?? ""); } catch { /* not remembered */ }
-    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") onCloseRef.current(); };
     window.addEventListener("keydown", esc);
     return () => window.removeEventListener("keydown", esc);
-  }, [load, onClose]);
+  }, []);
 
   const changed = useMemo(() => {
     const out: Record<string, number> = {};
