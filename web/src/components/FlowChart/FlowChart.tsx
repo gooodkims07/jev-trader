@@ -74,7 +74,11 @@ export default function FlowChart({
 
     if (originRef.current === null) originRef.current = series[0].block;
     const origin = originRef.current;
-    const fx = (b: number) => (b - origin) * STEP;
+    // Block numbers per step: 1 on Kuru; on OKX blocks are seconds, so a 5 s tick moves 5 at a time. Use the
+    // typical gap between recent points, so one step is STEP px whatever the tick (and after it changes).
+    const gaps = series.slice(-30).map((e, i, a) => (i ? e.block - a[i - 1].block : 0)).filter((g) => g > 0).sort((a, b) => a - b);
+    const span = gaps.length ? gaps[Math.floor(gaps.length / 2)] : 1;
+    const fx = (b: number) => ((b - origin) * STEP) / span;
 
     // --- value scale: window min/max, floored to 0.20% of price, eased 10%/block
     let lo = Infinity;
@@ -225,8 +229,10 @@ export default function FlowChart({
         onPointerMove={(ev) => {
           if (ev.pointerType !== "mouse" || !model || originRef.current === null) return;
           const r = ev.currentTarget.getBoundingClientRect();
-          const b = Math.round((ev.clientX - r.left - model.shift) / STEP) + originRef.current;
-          setHover(model.byBlock.has(b) ? b : null);
+          const x = ev.clientX - r.left - model.shift;
+          let best: number | null = null, dist = STEP;
+          for (const b of model.byBlock.keys()) { const d = Math.abs(model.fx(b) - x); if (d <= dist) { dist = d; best = b; } }
+          setHover(best);
         }}
         onPointerLeave={() => setHover(null)}
       >

@@ -90,3 +90,17 @@ test("snapshot: plan, gauge, open positions, Jev vs rules, and the spike list fo
   expect(Object.keys(s.stats).sort()).toEqual(["fade", "follow", "jev"]);
   expect(Array.isArray(s.curve)).toBe(true);
 });
+
+test("5 s ticks: windows are time, not tick counts (blocks are seconds)", async () => {
+  const v = venue(); const notes: string[] = [];
+  const t = new SpikeTrader(v, says("hold"), (_e, n) => { if (n) notes.push(n); });
+  v.setMid(3);
+  let b = 30_000;
+  for (let i = 0; i < 40; i++, b += 5) await t.onBlock(b); // 200 s of history in 5 s steps
+  expect(t.snapshot().gauge.r1Pct).toBe(0);
+  v.setMid(3 * 1.006); await t.onBlock(b); // +0.6% vs 60 s ago
+  expect(notes.at(-1)).toContain("SPIKE up 0.60% in 1m");
+  expect(t.snapshot().gauge.cooldownSec).toBe(180);
+  b += 5; await t.onBlock(b);
+  expect(t.snapshot().gauge.cooldownSec).toBe(175);
+});

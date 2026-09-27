@@ -1,7 +1,8 @@
 /**
  * Spike strategy (STRATEGY=spike, OKX, dry run only for now).
  *
- * Every tick the mid is compared with 1 and 3 minutes ago. A move of at least SPIKE_1M_PCT or
+ * Every tick (OKX_TICK_MS, changeable while running) the mid is compared with 1 and 3 minutes ago. OKX block
+ * numbers are seconds, so every window here is time: 1 and 3 minutes, the hold limit and the cooldown. A move of at least SPIKE_1M_PCT or
  * SPIKE_3M_PCT is a spike: Jev is asked to go long, go short, or stay out. A position opens at market
  * (simulated at the touch, taker fee) and closes at the take-profit, the stop-loss (both ROE, divided by
  * leverage into price) or after SPIKE_MAX_HOLD_MIN minutes. One position at a time.
@@ -20,7 +21,6 @@ import type { Action, Decision } from "./model";
 import type { BlockEvent, Totals } from "./trader";
 import type { Book, Fill, Quote, Side, Venue, VenueInfo } from "./venue";
 
-const TICKS_1M = (ms: number) => Math.round(60_000 / ms);
 const round = (x: number, d: number) => Math.round(x * 10 ** d) / 10 ** d;
 
 export interface SpikeState {
@@ -125,7 +125,8 @@ export interface SpikeSnapshot {
 export class SpikeTrader {
   readonly history: BlockEvent[] = [];
   onHalt: (reason: string) => void = () => {};
-  private mids: number[] = [];
+  /** Mid per tick with its block (a second), newest last; six minutes kept. */
+  private hist: { b: number; mid: number }[] = [];
   private busy = false;
   private cooldownUntil = 0;
   private open = new Map<Who, Open>();
@@ -137,8 +138,8 @@ export class SpikeTrader {
   private tradeRows: TradeRow[] = [];
   private lastMid = 0;
   private lastBlock = 0;
+  private refreshedAt = Date.now();
   private totals: Totals = { blocks: 0, decisions: 0, quotes: 0, fills: 0, reverted: 0, lateBlocks: 0, skips: 0, jevUsd: 0, gasMon: 0, gasUsd: 0, feesUsd: 0, realizedUsd: 0, pnlUsd: 0, pnlMon: 0, pnlPct: 0 };
-  private readonly tick1m: number;
   /** Read each time: the settings panel can change the ROE targets while the bot runs. Open positions keep theirs. */
   private get tpPct() { return config.spike.takeProfitRoePct / config.okx.leverage; }
   private get slPct() { return config.spike.stopLossRoePct / config.okx.leverage; }
@@ -151,7 +152,6 @@ export class SpikeTrader {
   ) {
     if (venue.live) throw new Error("STRATEGY=spike is dry run only for now: set DRY_RUN=true");
     mkdirSync("data", { recursive: true });
-    this.tick1m = TICKS_1M(venue.info.blockMs);
     if (existsSync(LOG)) for (const line of readFileSync(LOG, "utf8").split("\n")) {
       if (!line.trim()) continue;
       try { const r = JSON.parse(line); if (r.type === "spike") this.spikeRows.push(r); else if (r.type === "trade") this.tradeRows.push(r); } catch {}
@@ -160,9 +160,8 @@ export class SpikeTrader {
 
   /** For GET /spike: plan, how close the market is to a spike, open positions, and Jev vs the rules. */
   snapshot(): SpikeSnapshot {
-    const m = this.mids, n = m.length, t = this.tick1m, mid = this.lastMid;
-    const r = (k: number) => (n > k && mid ? round((mid / m[n - 1 - k]! - 1) * 100, 3) : null);
-    const ms = this.venue.info.blockMs, now = this.lastBlock; // blocks are ticks of the clock
+    const mid = this.lastMid, now = this.lastBlock; // blocks are seconds
+    const r = (sec: number) => { const then = this.midAgo(sec); return then && mid ? round((mid / then - 1) * 100, 3) : null; };
     const stats = {} as SpikeSnapshot["stats"];
     for (const who of ["jev", "fade", "follow"] as Who[]) {
       const ts = this.tradeRows.filter((x) => x.who === who);
@@ -174,14 +173,14 @@ export class SpikeTrader {
     const cum = { jev: 0, fade: 0, follow: 0 };
     const curve = [...this.tradeRows].sort((a, b) => a.closedAt - b.closedAt).map((x) => {
       cum[x.who] += x.pnlUsd;
-      return { ts: x.ts ?? x.closedAt * ms, jev: round(cum.jev, 5), fade: round(cum.fade, 5), follow: round(cum.follow, 5) };
+      return { ts: x.ts ?? x.closedAt * 1000, jev: round(cum.jev, 5), fade: round(cum.fade, 5), follow: round(cum.follow, 5) };
     });
     return {
       plan: { move1mPct: config.spike.move1mPct, move3mPct: config.spike.move3mPct, takeProfitRoePct: config.spike.takeProfitRoePct, stopLossRoePct: config.spike.stopLossRoePct, takeProfitPct: this.tpPct, stopLossPct: this.slPct, leverage: config.okx.leverage, maxHoldMin: config.spike.maxHoldMin, size: config.tradeSize, base: this.venue.info.base },
-      gauge: { r1Pct: r(t), r3Pct: r(3 * t), cooldownSec: Math.max(0, Math.round(((this.cooldownUntil - now) * ms) / 1000)) },
+      gauge: { r1Pct: r(60), r3Pct: r(180), cooldownSec: Math.max(0, this.cooldownUntil - now) },
       open: [...this.open.values()].map((o) => {
         const dir = o.side === "buy" ? 1 : -1, u = mid ? dir * (mid / o.entry - 1) * 100 : 0;
-        return { who: o.who, side: o.side, entry: o.entry, tp: o.tp, sl: o.sl, heldMin: round(((now - o.openedAt) * ms) / 60_000, 1), unrealizedPct: round(u, 3), unrealizedRoePct: round(u * config.okx.leverage, 2) };
+        return { who: o.who, side: o.side, entry: o.entry, tp: o.tp, sl: o.sl, heldMin: round((now - o.openedAt) / 60, 1), unrealizedPct: round(u, 3), unrealizedRoePct: round(u * config.okx.leverage, 2) };
       }),
       stats,
       spikes: this.spikeRows.slice(-50).reverse().map((s) => {
@@ -199,15 +198,15 @@ export class SpikeTrader {
 
   async onBlock(block: number) {
     this.totals.blocks++;
-    if (this.totals.blocks % config.refreshBlocks === 0) this.venue.refresh().catch(() => {});
+    if (Date.now() - this.refreshedAt > 60_000) { this.refreshedAt = Date.now(); this.venue.refresh().catch(() => {}); }
     if (this.busy) { this.totals.lateBlocks++; return; }
     this.busy = true;
     try {
       const book = await this.venue.readBook();
       this.lastMid = book.mid;
       this.lastBlock = block;
-      this.mids.push(book.mid);
-      if (this.mids.length > this.tick1m * 6) this.mids.shift();
+      this.hist.push({ b: block, mid: book.mid });
+      while (this.hist.length && this.hist[0]!.b < block - 360) this.hist.shift();
       let quote: Quote | null = null, fill: Fill | null = null, decision: Decision | null = null, note = "";
 
       // Exits first, for Jev and the shadows.
@@ -220,7 +219,7 @@ export class SpikeTrader {
 
       const spike = block >= this.cooldownUntil ? this.detect(book) : null;
       if (spike) {
-        this.cooldownUntil = block + Math.round((config.spike.cooldownSec * 1000) / this.venue.info.blockMs);
+        this.cooldownUntil = block + config.spike.cooldownSec;
         const followSide: Side = spike.direction === "up" ? "buy" : "sell";
         const fadeSide: Side = followSide === "buy" ? "sell" : "buy";
         for (const [who, side] of [["fade", fadeSide], ["follow", followSide]] as const) if (!this.open.has(who)) this.openPos(who, side, book, block);
@@ -244,28 +243,38 @@ export class SpikeTrader {
     }
   }
 
+  /** The mid `sec` seconds before the newest sample (the last one at or before then), or null without that much history. */
+  private midAgo(sec: number): number | null {
+    const h = this.hist, target = this.lastBlock - sec;
+    if (!h.length || h[0]!.b > target) return null;
+    for (let i = h.length - 1; i >= 0; i--) if (h[i]!.b <= target) return h[i]!.mid;
+    return null;
+  }
+
   /** A move of at least move1mPct over 1 minute or move3mPct over 3 minutes, needing 3 minutes of history. */
   detect(book: Book): SpikeState["spike"] | null {
-    const m = this.mids, n = m.length, t = this.tick1m;
-    if (n <= 3 * t) return null;
-    const r1 = (book.mid / m[n - 1 - t]! - 1) * 100, r3 = (book.mid / m[n - 1 - 3 * t]! - 1) * 100;
-    if (Math.abs(r1) >= config.spike.move1mPct) return { window: "1m", direction: r1 > 0 ? "up" : "down", movePct: round(r1, 3), fromPrice: m[n - 1 - t]! };
-    if (Math.abs(r3) >= config.spike.move3mPct) return { window: "3m", direction: r3 > 0 ? "up" : "down", movePct: round(r3, 3), fromPrice: m[n - 1 - 3 * t]! };
+    const m1 = this.midAgo(60), m3 = this.midAgo(180);
+    if (m1 === null || m3 === null) return null;
+    const r1 = (book.mid / m1 - 1) * 100, r3 = (book.mid / m3 - 1) * 100;
+    if (Math.abs(r1) >= config.spike.move1mPct) return { window: "1m", direction: r1 > 0 ? "up" : "down", movePct: round(r1, 3), fromPrice: m1 };
+    if (Math.abs(r3) >= config.spike.move3mPct) return { window: "3m", direction: r3 > 0 ? "up" : "down", movePct: round(r3, 3), fromPrice: m3 };
     return null;
   }
 
   private state(book: Book, spike: SpikeState["spike"]): SpikeState {
-    const m = this.mids, n = m.length, t = this.tick1m, { priceDecimals: pd, sizeDecimals: sd } = this.venue.info;
-    const ret = (k: number) => (n > k ? round((book.mid / m[n - 1 - k]! - 1) * 100, 3) : 0);
-    const every = Math.max(1, Math.round(t / 6)); // every 10 s
+    const { priceDecimals: pd, sizeDecimals: sd } = this.venue.info;
+    const ret = (sec: number) => { const then = this.midAgo(sec); return then ? round((book.mid / then - 1) * 100, 3) : 0; };
+    // The mid every 10 s over the last 5 minutes, whatever the tick.
+    const path: number[] = [];
+    for (let sec = 300; sec >= 0; sec -= 10) { const v = sec ? this.midAgo(sec) : book.mid; if (v !== null) path.push(v); }
     const lvl = (l: [number, number]) => `${l[0].toFixed(pd)} x ${round(l[1], sd)}`;
     const depth: SpikeState["depth"] = {};
     for (const [k, v] of Object.entries(book.depthBps)) depth[k + "bps"] = { bid: round(v.bid, sd), ask: round(v.ask, sd) };
-    const block = book.block, s = this.venue.trades.summary(3 * t, block);
+    const s = this.venue.trades.summary(180, this.lastBlock);
     return {
       market: this.venue.info.symbol, mid: book.mid, spreadBps: round(book.spreadBps, 2), spike,
-      returnsPct: { last1m: ret(t), last3m: ret(3 * t), last5m: ret(5 * t) },
-      recentMids: m.slice(-5 * t).filter((_, i, a) => (a.length - 1 - i) % every === 0).map((x) => x.toFixed(pd + 1)).join(" "),
+      returnsPct: { last1m: ret(60), last3m: ret(180), last5m: ret(300) },
+      recentMids: path.map((x) => x.toFixed(pd + 1)).join(" "),
       bookImbalance: round(book.imbalance, 3), depth,
       book: { bids: book.levels.bids.map(lvl), asks: book.levels.asks.map(lvl) },
       trades: { count: s.count, buyMon: round(s.buyMon, sd), sellMon: round(s.sellMon, sd), cvdMon: round(s.cvdMon, sd), vwap: s.vwap, lastSide: s.lastSide },
@@ -296,7 +305,7 @@ export class SpikeTrader {
     const long = o.side === "buy";
     if (long ? book.mid <= o.sl : book.mid >= o.sl) return "stop-loss";
     if (long ? book.mid >= o.tp : book.mid <= o.tp) return "take-profit";
-    if ((block - o.openedAt) * this.venue.info.blockMs >= config.spike.maxHoldMin * 60_000) return "time";
+    if (block - o.openedAt >= config.spike.maxHoldMin * 60) return "time";
     return null;
   }
 
@@ -308,7 +317,7 @@ export class SpikeTrader {
     const pnlUsd = dir * (exit - o.entry) * o.size - fees;
     const pnlPct = (pnlUsd / (o.entry * o.size)) * 100; // on notional, fees included
     this.closed[o.who]++;
-    const row: TradeRow = { type: "trade", who: o.who, side: o.side, spikeBlock: o.spikeBlock, openedAt: o.openedAt, closedAt: block, heldMin: round(((block - o.openedAt) * this.venue.info.blockMs) / 60_000, 1), entry: o.entry, exit, reason, pnlPct: round(pnlPct, 4), roePct: round(pnlPct * config.okx.leverage, 2), pnlUsd: round(pnlUsd, 5), ts: Date.now() };
+    const row: TradeRow = { type: "trade", who: o.who, side: o.side, spikeBlock: o.spikeBlock, openedAt: o.openedAt, closedAt: block, heldMin: round((block - o.openedAt) / 60, 1), entry: o.entry, exit, reason, pnlPct: round(pnlPct, 4), roePct: round(pnlPct * config.okx.leverage, 2), pnlUsd: round(pnlUsd, 5), ts: Date.now() };
     this.tradeRows.push(row);
     this.log(row);
     if (o.who !== "jev") return { quote: null, fill: null, pnlPct };

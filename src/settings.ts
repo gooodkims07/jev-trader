@@ -16,10 +16,14 @@ import type { Venue } from "./venue";
 
 const FILE = "data/settings.json";
 
-type Group = "spike" | "size" | "risk" | "mm";
-interface Def { key: string; group: Group; min: number; max: number; step: number; unit: string; get(): number; set(v: number): void; strategies: ("mm" | "spike")[] }
+type Group = "clock" | "spike" | "size" | "risk" | "mm";
+interface Def { key: string; group: Group; min: number; max: number; step: number; unit: string; get(): number; set(v: number): void; strategies: ("mm" | "spike")[]; options?: number[]; venues?: ("kuru" | "okx")[] }
+
+/** Tick lengths offered for OKX (ms). */
+export const TICK_OPTIONS = [1000, 3000, 5000, 10_000, 15_000, 30_000, 60_000];
 
 const DEFS: Def[] = [
+  { key: "okx.tickMs", group: "clock", min: 1000, max: 60_000, step: 1000, unit: "ms", get: () => config.okx.tickMs, set: (v) => { config.okx.tickMs = v; }, strategies: ["mm", "spike"], options: TICK_OPTIONS, venues: ["okx"] },
   { key: "spike.move1mPct", group: "spike", min: 0.05, max: 10, step: 0.05, unit: "%", get: () => config.spike.move1mPct, set: (v) => { config.spike.move1mPct = v; }, strategies: ["spike"] },
   { key: "spike.move3mPct", group: "spike", min: 0.05, max: 20, step: 0.05, unit: "%", get: () => config.spike.move3mPct, set: (v) => { config.spike.move3mPct = v; }, strategies: ["spike"] },
   { key: "spike.takeProfitRoePct", group: "spike", min: 1, max: 500, step: 1, unit: "% ROE", get: () => config.spike.takeProfitRoePct, set: (v) => { config.spike.takeProfitRoePct = v; }, strategies: ["spike"] },
@@ -33,7 +37,7 @@ const DEFS: Def[] = [
   { key: "risk.sessionTakeProfit", group: "risk", min: 0, max: 1e6, step: 0.5, unit: "quote", get: () => config.risk.sessionTakeProfit, set: (v) => { config.risk.sessionTakeProfit = v; }, strategies: ["mm"] },
   { key: "risk.positionStopPct", group: "risk", min: 0, max: 100, step: 0.5, unit: "%", get: () => config.risk.positionStopPct, set: (v) => { config.risk.positionStopPct = v; }, strategies: ["mm"] },
   { key: "risk.positionTakePct", group: "risk", min: 0, max: 1000, step: 0.5, unit: "%", get: () => config.risk.positionTakePct, set: (v) => { config.risk.positionTakePct = v; }, strategies: ["mm"] },
-  { key: "okx.emergencyStopPct", group: "risk", min: 0, max: 100, step: 0.5, unit: "%", get: () => config.okx.emergencyStopPct, set: (v) => { config.okx.emergencyStopPct = v; }, strategies: ["mm"] },
+  { key: "okx.emergencyStopPct", group: "risk", min: 0, max: 100, step: 0.5, unit: "%", get: () => config.okx.emergencyStopPct, set: (v) => { config.okx.emergencyStopPct = v; }, strategies: ["mm"], venues: ["okx"] },
 ];
 
 /** Apply data/settings.json over the .env values. Call once at startup, before the venue starts. */
@@ -42,7 +46,11 @@ export function applySavedSettings() {
   try {
     const saved = JSON.parse(readFileSync(FILE, "utf8")) as Record<string, number>;
     const applied: string[] = [];
-    for (const d of DEFS) if (typeof saved[d.key] === "number" && saved[d.key]! >= d.min && saved[d.key]! <= d.max) { d.set(saved[d.key]!); applied.push(`${d.key}=${saved[d.key]}`); }
+    for (const d of DEFS) {
+      const v = saved[d.key];
+      if (typeof v !== "number" || v < d.min || v > d.max || (d.options && !d.options.includes(v))) continue;
+      d.set(v); applied.push(`${d.key}=${v}`);
+    }
     if (applied.length) console.log(`settings from ${FILE}: ${applied.join(" ")}`);
   } catch (e) {
     console.warn(`${FILE}: ${(e as Error).message}; ignored`);
@@ -59,15 +67,15 @@ function tokenOk(req: Request) {
 /** GET /settings: values and limits. POST /settings { key: value, ... } with the admin token: validate, apply, persist. */
 export function settingsHandler(venue: Venue) {
   const strategy = config.strategy;
-  const defs = DEFS.filter((d) => d.strategies.includes(strategy) && (d.key !== "okx.emergencyStopPct" || venue.info.name === "okx"));
+  const defs = DEFS.filter((d) => d.strategies.includes(strategy) && (!d.venues || d.venues.includes(venue.info.name)));
   const view = () => ({
     editable: !!config.adminToken,
     strategy,
-    fields: defs.map((d) => ({ key: d.key, group: d.group, value: d.get(), min: d.min, max: d.max, step: d.step, unit: d.unit === "base" ? venue.info.base : d.unit === "quote" ? venue.info.quoteCcy : d.unit })),
+    fields: defs.map((d) => ({ key: d.key, group: d.group, value: d.get(), min: d.min, max: d.max, step: d.step, unit: d.unit === "base" ? venue.info.base : d.unit === "quote" ? venue.info.quoteCcy : d.unit, options: d.options ?? null })),
     fixed: {
       venue: venue.info.label, market: venue.info.market, strategy, live: venue.live, model: config.model,
       leverage: venue.info.name === "okx" ? config.okx.leverage : null,
-      tickMs: venue.info.blockMs, horizonBlocks: config.horizonBlocks, lookbackBlocks: config.lookbackBlocks,
+      tickMs: venue.info.name === "okx" ? null : venue.info.blockMs, horizonBlocks: config.horizonBlocks, lookbackBlocks: config.lookbackBlocks,
     },
   });
 
@@ -88,6 +96,7 @@ export function settingsHandler(venue: Venue) {
       const v = typeof raw === "number" ? raw : Number(raw);
       if (!Number.isFinite(v)) { errors[key] = "not a number"; continue; }
       if (v < d.min || v > d.max) { errors[key] = `between ${d.min} and ${d.max}`; continue; }
+      if (d.options && !d.options.includes(v)) { errors[key] = `one of ${d.options.join(", ")}`; continue; }
       next.set(d, v);
     }
     const val = (key: string) => { const d = defs.find((x) => x.key === key); return d ? (next.has(d) ? next.get(d)! : d.get()) : undefined; };

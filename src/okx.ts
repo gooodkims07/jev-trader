@@ -1,8 +1,9 @@
 /**
  * An OKX USDT-margined perpetual swap (OKX_INST_ID, default XRP-USDT-SWAP) as a Venue.
  *
- * No chain, so a timer stands in for the block: tick = floor(now / tickMs), and trade prints are
- * stamped with the tick of their exchange timestamp. OKX sizes are contracts (ctVal of the
+ * No chain, so a timer stands in for the block. Block numbers are seconds (floor(now / 1000)) whatever the
+ * tick, so they stay monotonic when OKX_TICK_MS changes while running; the loop runs once per tick
+ * (every OKX_TICK_MS) and trade prints are stamped with the second of their exchange timestamp. OKX sizes are contracts (ctVal of the
  * underlying each); everything that leaves this file is in the underlying, so the Trader, the model
  * and the dashboard see XRP (or whatever the swap trades), not contracts.
  *
@@ -127,7 +128,8 @@ export class OkxVenue implements Venue {
   get live() { return !config.dryRun && this.api.authed; }
   get account() { return this.live ? `okx ${this.instId}${this.demo ? " demo" : ""}` : null; }
 
-  tickOf(ms: number) { return Math.floor(ms / config.okx.tickMs); }
+  /** Block number for a time: the second. The tick decides how often the loop runs, not the numbering. */
+  tickOf(ms: number) { return Math.floor(ms / 1000); }
 
   async init() {
     if (this.base !== "MON" && !config.sizesSetForAnyCoin) throw new Error(`TRADE_SIZE_MON, MAX_POSITION_MON and the defaults are MON amounts. Set TRADE_SIZE and MAX_POSITION in ${this.base} for ${this.instId}.`);
@@ -174,12 +176,15 @@ export class OkxVenue implements Venue {
     console.log(`okx account · ${this.availUsdt.toFixed(2)} USDT available · ${config.okx.leverage}x ${config.okx.marginMode} · maker fee ${(this.makerFeeRate * 100).toFixed(4)}%`);
   }
 
+  /** One call per tick, aligned to the wall clock. The tick length is read each time, so it can change while running. */
   startClock(onBlock: (block: number) => void) {
-    let last = this.tickOf(Date.now());
+    let last = Math.floor(Date.now() / config.okx.tickMs), lastMs = config.okx.tickMs;
     setInterval(() => {
-      const t = this.tickOf(Date.now());
-      if (t > last) { last = t; onBlock(t); }
-    }, Math.max(5, Math.floor(config.okx.tickMs / 10)));
+      const now = Date.now(), ms = config.okx.tickMs;
+      const t = Math.floor(now / ms);
+      if (ms !== lastMs) { lastMs = ms; last = t; this.info.blockMs = ms; return; } // new tick length: start on its next boundary
+      if (t > last) { last = t; onBlock(this.tickOf(now)); }
+    }, 50);
   }
 
   /** Funding rate (dry runs too); live: USDT available for margin, and our position (so the reducing side is never blocked for funds). */

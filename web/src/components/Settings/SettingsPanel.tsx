@@ -4,16 +4,16 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useLang, type Key } from "@/lib/i18n";
 import styles from "./Settings.module.css";
 
-interface Field { key: string; group: "spike" | "size" | "risk" | "mm"; value: number; min: number; max: number; step: number; unit: string }
+interface Field { key: string; group: "clock" | "spike" | "size" | "risk" | "mm"; value: number; min: number; max: number; step: number; unit: string; options: number[] | null }
 interface View {
   editable: boolean;
   strategy: "mm" | "spike";
   fields: Field[];
-  fixed: { venue: string; market: string; strategy: string; live: boolean; model: string; leverage: number | null; tickMs: number; horizonBlocks: number; lookbackBlocks: number };
+  fixed: { venue: string; market: string; strategy: string; live: boolean; model: string; leverage: number | null; tickMs: number | null; horizonBlocks: number; lookbackBlocks: number };
 }
 
 const TOKEN = "jev.adminToken";
-const GROUPS: Field["group"][] = ["spike", "size", "risk", "mm"];
+const GROUPS: Field["group"][] = ["clock", "spike", "size", "risk", "mm"];
 
 /**
  * GET /settings shows every value; POST /settings changes the editable ones (server needs ADMIN_TOKEN, the
@@ -86,7 +86,7 @@ export default function SettingsPanel({ apiUrl, onClose }: { apiUrl: string; onC
         ["fixed.live", t(view.fixed.live ? "fixed.yes" : "fixed.no")],
         ["fixed.model", view.fixed.model],
         ...(view.fixed.leverage !== null ? ([["fixed.leverage", `${view.fixed.leverage}x`]] as [Key, string][]) : []),
-        ["fixed.tickMs", `${view.fixed.tickMs} ms`],
+        ...(view.fixed.tickMs !== null ? ([["fixed.tickMs", `${view.fixed.tickMs} ms`]] as [Key, string][]) : []),
         ...(view.strategy === "mm" ? ([["fixed.horizonBlocks", String(view.fixed.horizonBlocks)], ["fixed.lookbackBlocks", String(view.fixed.lookbackBlocks)]] as [Key, string][]) : []),
       ]
     : [];
@@ -109,14 +109,27 @@ export default function SettingsPanel({ apiUrl, onClose }: { apiUrl: string; onC
                 {fs.map((f) => (
                   <div key={f.key} className={styles.field}>
                     <label htmlFor={f.key}>{t(`field.${f.key}` as Key)}</label>
-                    <input
-                      id={f.key}
-                      className={`${styles.input} ${f.key in changed ? styles.changed : ""}`}
-                      type="number" inputMode="decimal" min={f.min} max={f.max} step={f.step}
-                      value={draft[f.key] ?? ""} disabled={!view?.editable}
-                      onChange={(e) => setDraft((d) => ({ ...d, [f.key]: e.target.value }))}
-                    />
-                    <span className={styles.unit}>{f.unit === "min" ? t("unit.min") : f.unit === "s" ? t("unit.s") : f.unit}</span>
+                    {f.options ? (
+                      <select
+                        id={f.key}
+                        className={`${styles.input} ${f.key in changed ? styles.changed : ""}`}
+                        value={draft[f.key] ?? ""} disabled={!view?.editable}
+                        onChange={(e) => setDraft((d) => ({ ...d, [f.key]: e.target.value }))}
+                      >
+                        {f.options.map((o) => (
+                          <option key={o} value={String(o)}>{o >= 60_000 ? t("tick.min", { n: o / 60_000 }) : t("tick.s", { n: o / 1000 })}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        id={f.key}
+                        className={`${styles.input} ${f.key in changed ? styles.changed : ""}`}
+                        type="number" inputMode="decimal" min={f.min} max={f.max} step={f.step}
+                        value={draft[f.key] ?? ""} disabled={!view?.editable}
+                        onChange={(e) => setDraft((d) => ({ ...d, [f.key]: e.target.value }))}
+                      />
+                    )}
+                    <span className={styles.unit}>{f.options ? "" : f.unit === "min" ? t("unit.min") : f.unit === "s" ? t("unit.s") : f.unit}</span>
                     {errors[f.key] ? <span className={styles.err}>{errors[f.key]}</span> : null}
                   </div>
                 ))}

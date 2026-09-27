@@ -76,6 +76,7 @@ export class Trader {
   /** A stop or take-profit that is closing the position. Session reasons stop the bot once flat. */
   private closing: CloseReason | null = null;
   private halted = false;
+  private refreshedAt = Date.now();
   /** Called once when a session stop or take-profit has closed the position: the bot should shut down. */
   onHalt: (reason: CloseReason) => void = () => {};
   private totals: Totals = { blocks: 0, decisions: 0, quotes: 0, fills: 0, reverted: 0, lateBlocks: 0, skips: 0, jevUsd: 0, gasMon: 0, gasUsd: 0, feesUsd: 0, realizedUsd: 0, pnlUsd: 0, pnlMon: 0, pnlPct: 0 };
@@ -94,7 +95,7 @@ export class Trader {
     if (this.halted) return;
     this.totals.blocks++;
     this.confirmPending(block); // off the hot path: receipts for earlier blocks' sends
-    if (this.totals.blocks % config.refreshBlocks === 0) this.venue.refresh().catch(() => {}); // balances, fee estimates
+    if (Date.now() - this.refreshedAt > 60_000) { this.refreshedAt = Date.now(); this.venue.refresh().catch(() => {}); } // balances, fee estimates
     if (this.busy) {
       this.totals.lateBlocks++;
       if (this.lastBook) this.emit(block, this.lastBook, null, null, true);
@@ -328,11 +329,16 @@ export class Trader {
       book: { bids: book.levels.bids.map(lvl), asks: book.levels.asks.map(lvl) },
       returnsBps: { last1: round(ret(1), 2), last5: round(ret(5), 2), last20: round(ret(20), 2), last100: round(ret(100), 2) },
       recentMids: sampled.map((x) => x.toFixed(pd + (this.venue.info.name === "kuru" ? 0 : 1))).join(" "),
-      trades: this.venue.trades.summary(L, block),
+      trades: this.venue.trades.summary(L * this.blocksPerTick(), block),
       recentTrades: this.venue.trades.recent(10).map((t) => `${t.block} ${t.side} ${round(t.size, sd)} @ ${t.price.toFixed(pd)}`),
       allowed: { buy: this.allowed("buy", book), sell: this.allowed("sell", book) },
       ...(this.venue.info.name === "okx" ? this.okxState(book, L) : {}),
     };
+  }
+
+  /** Block numbers per loop step: 1 on Kuru (a block), the tick in seconds on OKX (blocks are seconds). */
+  private blocksPerTick() {
+    return this.venue.info.name === "kuru" ? 1 : Math.max(1, Math.round(this.venue.info.blockMs / 1000));
   }
 
   /** OKX only: the lookback, our position, and what a fill costs. Kuru's state stays as it was. */

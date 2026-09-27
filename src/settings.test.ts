@@ -18,7 +18,7 @@ const post = (body: unknown, token?: string) =>
   new Request("http://x/settings", { method: "POST", body: JSON.stringify(body), headers: token ? { authorization: `Bearer ${token}` } : {} });
 
 test("settings: readable always, writable only with the admin token, validated, applied and saved", async () => {
-  const saved = { token: config.adminToken, size: config.tradeSize, cap: config.maxPosition, stop: config.risk.sessionStopLoss };
+  const saved = { token: config.adminToken, size: config.tradeSize, cap: config.maxPosition, stop: config.risk.sessionStopLoss, tick: config.okx.tickMs };
   try {
     config.adminToken = undefined;
     const h = settingsHandler(venue);
@@ -45,7 +45,14 @@ test("settings: readable always, writable only with the admin token, validated, 
     expect(JSON.parse(readFileSync("data/settings.json", "utf8"))).toMatchObject({ tradeSize: 7, maxPosition: 35, "risk.sessionStopLoss": 1.5 });
 
     expect((await h(post({ maxPosition: 3 }, "s3cret-token"))).status).toBe(400); // below the order size
+
+    // Tick length: OKX only, one of the offered lengths, applied at once.
+    expect((get.body as any).fields.find((f: any) => f.key === "okx.tickMs").options).toEqual([1000, 3000, 5000, 10000, 15000, 30000, 60000]);
+    const oddTick = await h(post({ "okx.tickMs": 2000 }, "s3cret-token"));
+    expect((oddTick.body as any).errors).toEqual({ "okx.tickMs": "one of 1000, 3000, 5000, 10000, 15000, 30000, 60000" });
+    expect((await h(post({ "okx.tickMs": 5000 }, "s3cret-token"))).status).toBe(200);
+    expect(config.okx.tickMs).toBe(5000);
   } finally {
-    config.adminToken = saved.token; config.tradeSize = saved.size; config.maxPosition = saved.cap; config.risk.sessionStopLoss = saved.stop;
+    config.adminToken = saved.token; config.tradeSize = saved.size; config.maxPosition = saved.cap; config.risk.sessionStopLoss = saved.stop; config.okx.tickMs = saved.tick;
   }
 });

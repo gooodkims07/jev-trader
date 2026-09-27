@@ -110,15 +110,11 @@ function okxQuestions(v: VenueInfo, units: string) {
 export class JevModel implements Model {
   readonly name = config.jevModelId;
   private model = typeSafeAi.evaluationModel(config.jevModelId);
-  private questions: ReturnType<typeof questions>;
-
-  constructor(venue: VenueInfo) {
-    this.questions = questions(venue);
-  }
+  constructor(private readonly venue: VenueInfo) {}
 
   async decide(state: TradeState): Promise<Decision> {
     const t0 = performance.now();
-    const r = await experimental_evaluate({ model: this.model, state: state as any, questions: this.questions, maxRetries: 0 });
+    const r = await experimental_evaluate({ model: this.model, state: state as any, questions: questions(this.venue), maxRetries: 0 });
     const a = r.answers.direction;
     const p = a.probabilities ?? { buy: 0, sell: 0, [a.choice]: 1 };
     const buy = p.buy ?? 0, sell = p.sell ?? 0, hold = (p as Record<string, number>).hold ?? 0;
