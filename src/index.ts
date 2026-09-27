@@ -6,6 +6,10 @@ import type { Venue } from "./venue";
 
 const venue: Venue = config.venue === "okx" ? new (await import("./okx")).OkxVenue() : new (await import("./market")).KuruVenue();
 await venue.init();
+if (config.strategy === "spike") {
+  if (config.venue !== "okx") throw new Error("STRATEGY=spike needs VENUE=okx");
+  await (await import("./spike-main")).runSpike(venue);
+} else {
 const model = createModel(venue.info);
 const { info } = venue;
 const px = (p: number) => p.toFixed(info.priceDecimals);
@@ -60,3 +64,4 @@ for (const sig of ["SIGINT", "SIGTERM"] as const)
     await venue.shutdown().catch((e) => console.warn(`shutdown: ${(e as Error).message}`));
     process.exit(0);
   });
+}

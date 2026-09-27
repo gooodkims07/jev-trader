@@ -77,6 +77,24 @@ export const config = {
   port: Number(env("PORT", "3000")),
   historySize: 1000,
   /**
+   * mm: market making (one post-only order per block; Kuru's demo, and OKX). spike (OKX, dry run only for
+   * now): wait for a sharp move, let Jev choose long, short or stay out, enter at market, exit at
+   * take-profit, stop-loss or a time limit.
+   */
+  strategy: (env("STRATEGY", "mm") as "mm" | "spike"),
+  spike: {
+    /** A spike: the mid moved at least this % in 1 minute, or move3mPct in 3 minutes. */
+    move1mPct: Number(env("SPIKE_1M_PCT", "0.5")),
+    move3mPct: Number(env("SPIKE_3M_PCT", "0.8")),
+    /** Exits as return on margin (ROE, %): the price levels are these divided by OKX_LEVERAGE. */
+    takeProfitRoePct: Number(env("SPIKE_TP_ROE_PCT", "20")),
+    stopLossRoePct: Number(env("SPIKE_SL_ROE_PCT", "30")),
+    maxHoldMin: Number(env("SPIKE_MAX_HOLD_MIN", "240")),
+    /** No new spike for this long after one fires, so one move is asked about once. */
+    cooldownSec: Number(env("SPIKE_COOLDOWN_SEC", "180")),
+    takerFeeRate: Number(env("OKX_TAKER_FEE_RATE", "0.0005")),
+  },
+  /**
    * Stops and take-profits, all off (0) by default. Money in the venue's quote currency (USDT on OKX),
    * positions as the price move from the average entry, in percent.
    *   session: P&L of this run (realized + unrealized - gas - fees) at or below -stopLoss, or at or above
