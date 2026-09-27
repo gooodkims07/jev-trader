@@ -46,10 +46,11 @@ export default function SpikeStatus({ snap }: { snap: SpikeSnapshot | null }) {
           <>
             <div className={styles.posHead}>
               <span className={styles.posWord} style={{ color: jev.side === "buy" ? "var(--buy-ink)" : "var(--sell-ink)" }}>
-                {t(jev.side === "buy" ? "spike.long" : "spike.short")} {plan?.size} {plan?.base}
+                {t(jev.side === "buy" ? "spike.long" : "spike.short")} {jev.size ?? plan?.size} {plan?.base}
+                {jev.adds ? <span className={styles.labelNote} style={{ fontSize: 12, marginLeft: 8 }}>{t("spike.adds", { n: jev.adds })}</span> : null}
               </span>
               <span className={`${styles.posRoe} ${jev.unrealizedRoePct >= 0 ? styles.pos : styles.neg}`}>
-                ROE {sign(jev.unrealizedRoePct, 1)}%
+                ROE {sign(jev.unrealizedRoePct, 1)}%{jev.unrealizedUsd !== undefined ? ` (${sign(jev.unrealizedUsd, 3)} USDT)` : ""}
               </span>
             </div>
             <div className={styles.kv}>

@@ -120,3 +120,81 @@ test("windows are settings: a 30 s window catches a move the 1 m window would", 
     config.spike.window1Sec = saved.w1; config.spike.window2Sec = saved.w2;
   }
 });
+
+const queue = (...actions: ("buy" | "sell" | "hold")[]): SpikeModel => ({ name: "q", async decide() { const a = actions.shift() ?? "hold"; return { action: a, probabilities: { buy: 0, sell: 0, hold: 0, [a]: 0.9 }, upIn10: 0, latencyMs: 1, inputTokens: 1 }; } });
+
+/** Flat for `secs`, then a one-tick move of `pct` %; returns the next block. */
+async function spikeAfter(t: SpikeTrader, v: ReturnType<typeof venue>, b: number, secs: number, mid: number, pct: number) {
+  b = await warm(t, v, b, secs, mid);
+  v.setMid(mid * (1 + pct / 100)); await t.onBlock(b++);
+  return b;
+}
+
+test("adds: a second spike on the same side adds an order at the average price, up to SPIKE_MAX_ADDS", async () => {
+  const saved = { adds: config.spike.maxAdds, rev: config.spike.allowReverse, size: config.tradeSize };
+  config.spike.maxAdds = 1; config.spike.allowReverse = 0; config.tradeSize = 5;
+  try {
+    const v = venue(); const notes: string[] = [];
+    const t = new SpikeTrader(v, queue("buy", "buy", "buy"), (_e, n) => { if (n) notes.push(n); });
+    let b = await spikeAfter(t, v, 50_000, 200, 1, -0.6);       // Jev buys the drop
+    expect(notes.at(-1)).toContain(": open");
+    b = await spikeAfter(t, v, b, 200, 0.994, -0.6);             // another drop, after the cooldown
+    expect(notes.at(-1)).toContain(": add");
+    const jev = t.snapshot().open.find((o) => o.who === "jev")!;
+    expect(jev.size).toBe(10);
+    expect(jev.adds).toBe(1);
+    expect(jev.entry).toBeLessThan(0.994); // averaged down
+    b = await spikeAfter(t, v, b, 200, 0.988, -0.6);             // no adds left: held as it is
+    expect(notes.at(-1)).toContain(": hold");
+    expect(t.snapshot().open.find((o) => o.who === "jev")!.size).toBe(10);
+  } finally {
+    config.spike.maxAdds = saved.adds; config.spike.allowReverse = saved.rev; config.tradeSize = saved.size;
+  }
+});
+
+test("reverse: the other side closes the position (reason reverse) and opens the other way; off, it holds", async () => {
+  const saved = { adds: config.spike.maxAdds, rev: config.spike.allowReverse };
+  config.spike.maxAdds = 0; config.spike.allowReverse = 1;
+  try {
+    const v = venue(); const notes: string[] = [];
+    const t = new SpikeTrader(v, queue("buy", "sell"), (_e, n) => { if (n) notes.push(n); });
+    let b = await spikeAfter(t, v, 60_000, 200, 1, -0.6);
+    b = await spikeAfter(t, v, b, 200, 0.994, 0.6);
+    expect(notes.at(-1)).toContain(": reverse (closed");
+    expect(t.snapshot().open.find((o) => o.who === "jev")!.side).toBe("sell");
+    const rows = readFileSync("data/spike.jsonl", "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    expect(rows.some((r) => r.type === "trade" && r.who === "jev" && r.reason === "reverse" && r.openedAt >= 60_000)).toBe(true);
+
+    config.spike.allowReverse = 0;
+    const t2 = new SpikeTrader(v, queue("buy", "sell"), (_e, n) => { if (n) notes.push(n); });
+    b = await spikeAfter(t2, v, 70_000, 200, 1, -0.6);
+    b = await spikeAfter(t2, v, b, 200, 0.994, 0.6);
+    expect(notes.at(-1)).toContain("(in a position: not asked)"); // adds and reverse both off: not even asked
+    expect(t2.snapshot().open.find((o) => o.who === "jev")!.side).toBe("buy");
+  } finally {
+    config.spike.maxAdds = saved.adds; config.spike.allowReverse = saved.rev;
+  }
+});
+
+test("adds on, reverse off: the other side is asked about but held", async () => {
+  const saved = { adds: config.spike.maxAdds, rev: config.spike.allowReverse };
+  config.spike.maxAdds = 2; config.spike.allowReverse = 0;
+  try {
+    const v = venue(); const notes: string[] = [];
+    const t = new SpikeTrader(v, queue("buy", "sell"), (_e, n) => { if (n) notes.push(n); });
+    let b = await spikeAfter(t, v, 90_000, 200, 1, -0.6);
+    b = await spikeAfter(t, v, b, 200, 0.994, 0.6);
+    expect(notes.at(-1)).toContain("-> sell (fade): hold");
+    expect(t.snapshot().open.find((o) => o.who === "jev")!.side).toBe("buy");
+  } finally {
+    config.spike.maxAdds = saved.adds; config.spike.allowReverse = saved.rev;
+  }
+});
+
+test("both off: in a position Jev is not asked again (as before)", async () => {
+  const v = venue(); const notes: string[] = [];
+  const t = new SpikeTrader(v, queue("buy", "buy"), (_e, n) => { if (n) notes.push(n); });
+  let b = await spikeAfter(t, v, 80_000, 200, 1, -0.6);
+  b = await spikeAfter(t, v, b, 200, 0.994, -0.6);
+  expect(notes.at(-1)).toContain("(in a position: not asked)");
+});

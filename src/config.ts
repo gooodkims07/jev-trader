@@ -99,6 +99,10 @@ export const config = {
     takeProfitRoePct: Number(env("SPIKE_TP_ROE_PCT", "20")),
     stopLossRoePct: Number(env("SPIKE_SL_ROE_PCT", "30")),
     maxHoldMin: Number(env("SPIKE_MAX_HOLD_MIN", "240")),
+    /** While in a position, a new spike on the same side adds another order, up to this many times (0 = never). */
+    maxAdds: Number(env("SPIKE_MAX_ADDS", "0")),
+    /** While in a position, a new spike on the other side closes it and opens the other way (1) or is ignored (0). */
+    allowReverse: Number(env("SPIKE_ALLOW_REVERSE", "0")),
     /** No new spike for this long after one fires, so one move is asked about once. */
     cooldownSec: Number(env("SPIKE_COOLDOWN_SEC", "180")),
     takerFeeRate: Number(env("OKX_TAKER_FEE_RATE", "0.0005")),

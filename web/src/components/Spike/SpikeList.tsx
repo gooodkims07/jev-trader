@@ -9,16 +9,22 @@ const hhmm = (ts: number) => new Date(ts).toLocaleTimeString("en-GB", { hour: "2
 function choice(s: SpikeRow, t: T): { text: string; colour: string } {
   if (!s.asked || !s.jev) return { text: t("spike.notAsked"), colour: "var(--muted-2)" };
   const a = s.jev.action;
-  if (a === "hold") return { text: t("spike.stayOut", { p: Math.round(s.jev.probabilities.hold * 100) }), colour: "var(--muted)" };
+  if (a === "hold") return { text: t(s.effect === "hold" ? "spike.keptOut" : "spike.stayOut", { p: Math.round(s.jev.probabilities.hold * 100) }), colour: "var(--muted)" };
   const follow = (a === "buy") === (s.direction === "up");
   const p = Math.round((a === "buy" ? s.jev.probabilities.buy : s.jev.probabilities.sell) * 100);
+  const side = t(a === "buy" ? "chart.long" : "chart.short");
+  const colour = a === "buy" ? "var(--buy-ink)" : "var(--sell-ink)";
+  if (s.effect === "add") return { text: t("spike.added", { side, p }), colour };
+  if (s.effect === "reverse") return { text: t("spike.reversed", { side, p }), colour };
+  if (s.effect === "hold") return { text: t("spike.kept", { side, p }), colour: "var(--muted)" };
   return { text: t("spike.choice", { side: t(a === "buy" ? "chart.long" : "chart.short"), p, style: t(follow ? "spike.follow" : "spike.fade") }), colour: a === "buy" ? "var(--buy-ink)" : "var(--sell-ink)" };
 }
 
 function outcome(s: SpikeRow, t: T): { text: string; cls: string } {
   if (s.trade) {
-    const r = s.trade.reason === "take-profit" ? "TP" : s.trade.reason === "stop-loss" ? "SL" : t("spike.time");
-    return { text: `${r} ${s.trade.roePct >= 0 ? "+" : ""}${s.trade.roePct.toFixed(1)}%`, cls: s.trade.pnlUsd >= 0 ? styles.pos : styles.neg };
+    const r = s.trade.reason === "take-profit" ? "TP" : s.trade.reason === "stop-loss" ? "SL" : s.trade.reason === "reverse" ? "REV" : s.trade.reason === "switch" ? "SW" : t("spike.time");
+    const sg = (n: number, d: number) => `${n >= 0 ? "+" : ""}${n.toFixed(d)}`;
+    return { text: `${r} ${sg(s.trade.roePct, 1)}% ${sg(s.trade.pnlUsd, 3)}`, cls: s.trade.pnlUsd >= 0 ? styles.pos : styles.neg };
   }
   if (s.jevOpen) return { text: t("spike.open"), cls: "" };
   return { text: "", cls: styles.dim };

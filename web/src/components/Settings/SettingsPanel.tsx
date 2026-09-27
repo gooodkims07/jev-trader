@@ -125,7 +125,7 @@ export default function SettingsPanel({ apiUrl, onClose }: { apiUrl: string; onC
                         onChange={(e) => setDraft((d) => ({ ...d, [f.key]: e.target.value }))}
                       >
                         {f.options.map((o) => (
-                          <option key={o} value={String(o)}>{f.unit === "ms" ? (o >= 60_000 ? t("tick.min", { n: o / 60_000 }) : t("tick.s", { n: o / 1000 })) : span(t, o)}</option>
+                          <option key={o} value={String(o)}>{f.unit === "ms" ? (o >= 60_000 ? t("tick.min", { n: o / 60_000 }) : t("tick.s", { n: o / 1000 })) : f.unit === "bool" ? t(o ? "opt.on" : "opt.off") : f.unit === "count" ? (o ? String(o) : t("opt.off")) : span(t, o)}</option>
                         ))}
                       </select>
                     ) : (

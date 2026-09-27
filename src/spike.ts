@@ -23,6 +23,15 @@ import type { Book, Fill, Quote, Side, Venue, VenueInfo } from "./venue";
 
 const round = (x: number, d: number) => Math.round(x * 10 ** d) / 10 ** d;
 
+/** What long / short / stay out mean while we already hold a position, as set now (SPIKE_MAX_ADDS, SPIKE_ALLOW_REVERSE). */
+function positionRules(): string {
+  const { maxAdds, allowReverse } = config.spike;
+  if (!maxAdds && !allowReverse) return "";
+  const same = maxAdds ? `choosing its side adds one more order at market while \`position.addsLeft\` is above 0 (the entry becomes the average and the take-profit and stop move with it), and keeps the position as it is once none are left` : "choosing its side keeps the position as it is";
+  const other = allowReverse ? "choosing the other side closes it at market and opens the other way" : "choosing the other side keeps the position as it is";
+  return ` When \`position\` is set we already hold one: ${same}; ${other}; staying out keeps it. The time limit counts from the first entry.`;
+}
+
 /** 30 -> "30s", 60 -> "1m", 180 -> "3m": how a window is written in rows, logs and the dashboard. */
 export const spanLabel = (sec: number) => (sec % 60 === 0 ? `${sec / 60}m` : `${sec}s`);
 /** 30 -> "30 seconds", 60 -> "1 minute", 180 -> "3 minutes": for Jev's question. */
@@ -44,8 +53,10 @@ export interface SpikeState {
   /** Taker prints over the longer spike window. cvdMon = taker buys minus taker sells, in the coin. */
   trades: { count: number; buyMon: number; sellMon: number; cvdMon: number; vwap: number | null; lastSide: Side | null };
   recentTrades: string[];
-  plan: { leverage: number; takeProfitPct: number; stopLossPct: number; takeProfitRoePct: number; stopLossRoePct: number; maxHoldMin: number; takerFeeBps: number };
+  plan: { leverage: number; takeProfitPct: number; stopLossPct: number; takeProfitRoePct: number; stopLossRoePct: number; maxHoldMin: number; takerFeeBps: number; maxAdds: number; canReverse: boolean };
   fundingRatePct: number | null;
+  /** Our position when the spike came, or null when flat. addsLeft: how many more same-side entries are allowed. */
+  position: { side: "long" | "short"; sizeMon: number; entry: number; adds: number; addsLeft: number; heldMin: number; unrealizedRoePct: number } | null;
 }
 
 export interface SpikeModel {
@@ -61,7 +72,7 @@ export function spikeQuestions(v: VenueInfo) {
       instructions: {
         question: "The price just moved sharply (see `spike`). Go long now, go short now, or stay out?",
         goal: `Trade short-lived spikes on the ${b}-USDT perpetual swap on ${v.label}. When the price moves at least ${config.spike.move1mPct}% in ${spanWords(config.spike.window1Sec)} or ${config.spike.move3mPct}% in ${spanWords(config.spike.window2Sec)}, you decide. Long or short opens a position at market now, paying \`plan.takerFeeBps\` each way. It closes when the price moves \`plan.takeProfitPct\` in our favour or \`plan.stopLossPct\` against us, or after \`plan.maxHoldMin\` minutes. After an up spike, long follows the move and short fades it; after a down spike it is the other way round. The stop is further away than the take-profit, so a trade has to hit its take-profit first well over half the time to pay; stay out unless one side clearly has the better odds.`,
-        timing: "The order fills at market within a second. The position is then watched every second against the mid until an exit.",
+        timing: `The order fills at market within a second. The position is then watched every tick against the mid until an exit.${positionRules()}`,
         inputs: `\`spike\` is the triggering move. \`returnsPct\` and \`recentMids\` show the path over the last 5 minutes. \`trades\` and \`recentTrades\` show taker flow over the last ${spanWords(Math.max(config.spike.window1Sec, config.spike.window2Sec))}: heavy flow in the spike's direction that is dying out can mean the move is exhausted and will give some back; flow still building can mean it continues. \`book\`, \`depth\` and \`bookImbalance\` show resting liquidity; thin depth on one side means the price moves easily that way. \`fundingRatePct\` is per funding period; positive means longs pay shorts. Sizes and every field ending in \`Mon\` are in ${b}.`,
       },
       criteria: {
@@ -108,19 +119,22 @@ export class MockSpikeModel implements SpikeModel {
 export const createSpikeModel = (v: VenueInfo): SpikeModel => (config.model === "jev" ? new JevSpikeModel(v) : new MockSpikeModel());
 
 type Who = "jev" | "fade" | "follow";
-interface Open { who: Who; side: Side; entry: number; size: number; openedAt: number; spikeBlock: number; tp: number; sl: number }
+/** entry is the average over the first order and any adds; tp and sl follow it. */
+interface Open { who: Who; side: Side; entry: number; size: number; adds: number; openedAt: number; spikeBlock: number; tp: number; sl: number }
+/** What a spike did to one strategy's position. */
+type Effect = "open" | "add" | "reverse" | "hold" | "out" | "not-asked";
 
 const LOG = "data/spike.jsonl";
 /** A row of data/spike.jsonl. */
-interface SpikeRow { type: "spike"; instId?: string; block: number; ts: number; window: string; direction: "up" | "down"; movePct: number; mid: number; asked: boolean; jev: { action: Action; probabilities: Record<Action, number>; latencyMs: number } | null }
-interface TradeRow { type: "trade"; instId?: string; who: Who; side: Side; spikeBlock: number; openedAt: number; closedAt: number; heldMin: number; entry: number; exit: number; reason: string; pnlPct: number; roePct: number; pnlUsd: number; ts?: number }
+interface SpikeRow { type: "spike"; instId?: string; block: number; ts: number; window: string; direction: "up" | "down"; movePct: number; mid: number; asked: boolean; effect?: Effect; jev: { action: Action; probabilities: Record<Action, number>; latencyMs: number } | null }
+interface TradeRow { type: "trade"; instId?: string; who: Who; side: Side; spikeBlock: number; openedAt: number; closedAt: number; heldMin: number; entry: number; exit: number; size?: number; adds?: number; reason: string; pnlPct: number; roePct: number; pnlUsd: number; ts?: number }
 
 /** What the dashboard's spike panels read from GET /spike. */
 export interface SpikeSnapshot {
-  plan: { move1mPct: number; move3mPct: number; window1Sec: number; window2Sec: number; takeProfitRoePct: number; stopLossRoePct: number; takeProfitPct: number; stopLossPct: number; leverage: number; maxHoldMin: number; size: number; base: string };
+  plan: { maxAdds: number; allowReverse: boolean; move1mPct: number; move3mPct: number; window1Sec: number; window2Sec: number; takeProfitRoePct: number; stopLossRoePct: number; takeProfitPct: number; stopLossPct: number; leverage: number; maxHoldMin: number; size: number; base: string };
   /** The mid's move now vs 1 and 3 minutes ago, in %, or null while history fills. */
   gauge: { r1Pct: number | null; r3Pct: number | null; cooldownSec: number };
-  open: { who: Who; side: Side; entry: number; tp: number; sl: number; heldMin: number; unrealizedPct: number; unrealizedRoePct: number }[];
+  open: { who: Who; side: Side; entry: number; size: number; adds: number; tp: number; sl: number; heldMin: number; unrealizedPct: number; unrealizedRoePct: number; unrealizedUsd: number }[];
   stats: Record<Who, { trades: number; wins: number; avgPct: number; totalUsd: number; tp: number; sl: number; time: number }>;
   /** Newest first; `trade` is Jev's closed trade from that spike, if any. */
   spikes: (SpikeRow & { trade: Pick<TradeRow, "side" | "reason" | "pnlPct" | "roePct" | "pnlUsd"> | null; jevOpen: boolean })[];
@@ -184,11 +198,11 @@ export class SpikeTrader {
       return { ts: x.ts ?? x.closedAt * 1000, jev: round(cum.jev, 5), fade: round(cum.fade, 5), follow: round(cum.follow, 5) };
     });
     return {
-      plan: { move1mPct: config.spike.move1mPct, move3mPct: config.spike.move3mPct, window1Sec: config.spike.window1Sec, window2Sec: config.spike.window2Sec, takeProfitRoePct: config.spike.takeProfitRoePct, stopLossRoePct: config.spike.stopLossRoePct, takeProfitPct: this.tpPct, stopLossPct: this.slPct, leverage: config.okx.leverage, maxHoldMin: config.spike.maxHoldMin, size: config.tradeSize, base: this.venue.info.base },
+      plan: { maxAdds: config.spike.maxAdds, allowReverse: !!config.spike.allowReverse, move1mPct: config.spike.move1mPct, move3mPct: config.spike.move3mPct, window1Sec: config.spike.window1Sec, window2Sec: config.spike.window2Sec, takeProfitRoePct: config.spike.takeProfitRoePct, stopLossRoePct: config.spike.stopLossRoePct, takeProfitPct: this.tpPct, stopLossPct: this.slPct, leverage: config.okx.leverage, maxHoldMin: config.spike.maxHoldMin, size: config.tradeSize, base: this.venue.info.base },
       gauge: { r1Pct: r(config.spike.window1Sec), r3Pct: r(config.spike.window2Sec), cooldownSec: Math.max(0, this.cooldownUntil - now) },
       open: [...this.open.values()].map((o) => {
         const dir = o.side === "buy" ? 1 : -1, u = mid ? dir * (mid / o.entry - 1) * 100 : 0;
-        return { who: o.who, side: o.side, entry: o.entry, tp: o.tp, sl: o.sl, heldMin: round((now - o.openedAt) / 60, 1), unrealizedPct: round(u, 3), unrealizedRoePct: round(u * config.okx.leverage, 2) };
+        return { who: o.who, side: o.side, entry: o.entry, size: o.size, adds: o.adds, tp: o.tp, sl: o.sl, heldMin: round((now - o.openedAt) / 60, 1), unrealizedPct: round(u, 3), unrealizedRoePct: round(u * config.okx.leverage, 2), unrealizedUsd: round(mid ? dir * (mid - o.entry) * o.size : 0, 4) };
       }),
       stats,
       spikes: this.spikeRows.slice(-50).reverse().map((s) => {
@@ -231,16 +245,23 @@ export class SpikeTrader {
         this.cooldownUntil = block + config.spike.cooldownSec;
         const followSide: Side = spike.direction === "up" ? "buy" : "sell";
         const fadeSide: Side = followSide === "buy" ? "sell" : "buy";
-        for (const [who, side] of [["fade", fadeSide], ["follow", followSide]] as const) if (!this.open.has(who)) this.openPos(who, side, book, block);
-        if (!this.open.has("jev")) {
+        // The rules act on every spike, by the same add / reverse rules as Jev.
+        for (const [who, side] of [["fade", fadeSide], ["follow", followSide]] as const) this.act(who, side, book, block);
+        // Jev is asked when flat, or in a position when adding or reversing is allowed.
+        const inPos = this.open.has("jev");
+        let effect: Effect = "not-asked";
+        if (!inPos || config.spike.maxAdds > 0 || config.spike.allowReverse) {
           decision = await this.model.decide(this.state(book, spike));
           this.totals.decisions++;
           this.totals.jevUsd += (decision.inputTokens / 1e6) * config.jevUsdPerMTok;
-          if (decision.action === "hold") this.totals.skips++;
-          else ({ quote, fill } = this.openPos("jev", decision.action, book, block));
-          note = `SPIKE ${spike.direction} ${spike.movePct.toFixed(2)}% in ${spike.window} -> ${decision.action === "hold" ? "stay out" : decision.action === followSide ? `${decision.action} (follow)` : `${decision.action} (fade)`}`;
+          const r = this.act("jev", decision.action === "hold" ? null : decision.action, book, block);
+          effect = r.effect;
+          if (r.quote) ({ quote, fill } = r);
+          if (effect === "out" || effect === "hold") this.totals.skips++;
+          const style = decision.action === "hold" ? "" : decision.action === followSide ? " (follow)" : " (fade)";
+          note = `SPIKE ${spike.direction} ${spike.movePct.toFixed(2)}% in ${spike.window} -> ${decision.action === "hold" ? "stay out" : decision.action}${style}: ${effect}${r.exitPct !== undefined ? ` (closed ${r.exitPct >= 0 ? "+" : ""}${r.exitPct.toFixed(3)}%)` : ""}`;
         } else note = `SPIKE ${spike.direction} ${spike.movePct.toFixed(2)}% in ${spike.window} (in a position: not asked)`;
-        const row: SpikeRow = { type: "spike", instId: this.venue.info.market, block, ts: Date.now(), window: spike.window, direction: spike.direction, movePct: spike.movePct, mid: book.mid, asked: !!decision, jev: decision && { action: decision.action, probabilities: decision.probabilities, latencyMs: Math.round(decision.latencyMs) } };
+        const row: SpikeRow = { type: "spike", instId: this.venue.info.market, block, ts: Date.now(), window: spike.window, direction: spike.direction, movePct: spike.movePct, mid: book.mid, asked: !!decision, effect, jev: decision && { action: decision.action, probabilities: decision.probabilities, latencyMs: Math.round(decision.latencyMs) } };
         this.spikeRows.push(row);
         this.log(row);
       }
@@ -298,16 +319,61 @@ export class SpikeTrader {
       book: { bids: book.levels.bids.map(lvl), asks: book.levels.asks.map(lvl) },
       trades: { count: s.count, buyMon: round(s.buyMon, sd), sellMon: round(s.sellMon, sd), cvdMon: round(s.cvdMon, sd), vwap: s.vwap, lastSide: s.lastSide },
       recentTrades: this.venue.trades.recent(10).map((x) => `${x.side} ${round(x.size, sd)} @ ${x.price.toFixed(pd)}`),
-      plan: { leverage: config.okx.leverage, takeProfitPct: this.tpPct, stopLossPct: this.slPct, takeProfitRoePct: config.spike.takeProfitRoePct, stopLossRoePct: config.spike.stopLossRoePct, maxHoldMin: config.spike.maxHoldMin, takerFeeBps: round(config.spike.takerFeeRate * 10_000, 2) },
+      plan: { leverage: config.okx.leverage, takeProfitPct: this.tpPct, stopLossPct: this.slPct, takeProfitRoePct: config.spike.takeProfitRoePct, stopLossRoePct: config.spike.stopLossRoePct, maxHoldMin: config.spike.maxHoldMin, takerFeeBps: round(config.spike.takerFeeRate * 10_000, 2), maxAdds: config.spike.maxAdds, canReverse: !!config.spike.allowReverse },
       fundingRatePct: this.venue.extras?.().fundingRatePct ?? null,
+      position: this.positionState(book),
     };
+  }
+
+  /** Jev's position as the question shows it, or null when flat. */
+  private positionState(book: Book): SpikeState["position"] {
+    const o = this.open.get("jev");
+    if (!o) return null;
+    const dir = o.side === "buy" ? 1 : -1, u = dir * (book.mid / o.entry - 1) * 100;
+    return { side: dir > 0 ? "long" : "short", sizeMon: o.size, entry: o.entry, adds: o.adds, addsLeft: Math.max(0, config.spike.maxAdds - o.adds), heldMin: round((this.lastBlock - o.openedAt) / 60, 1), unrealizedRoePct: round(u * config.okx.leverage, 2) };
+  }
+
+  /**
+   * What one strategy does with a spike, given the side it wants (null: stay out). Flat: open. Same side:
+   * add while adds are left (SPIKE_MAX_ADDS), else hold. Other side: close and open the other way when
+   * SPIKE_ALLOW_REVERSE, else hold. Returns the effect and, for Jev, the order this block shows.
+   */
+  act(who: Who, want: Side | null, book: Book, block: number): { effect: Effect; quote: Quote | null; fill: Fill | null; exitPct?: number } {
+    const o = this.open.get(who);
+    if (!want) return { effect: o ? "hold" : "out", quote: null, fill: null };
+    if (!o) return { effect: "open", ...this.openPos(who, want, book, block) };
+    if (o.side === want) {
+      if (o.adds >= config.spike.maxAdds) return { effect: "hold", quote: null, fill: null };
+      return { effect: "add", ...this.addTo(o, book, block) };
+    }
+    if (!config.spike.allowReverse) return { effect: "hold", quote: null, fill: null };
+    const exitPct = this.close(o, book, block, "reverse").pnlPct;
+    return { effect: "reverse", ...this.openPos(who, want, book, block), exitPct };
+  }
+
+  /** One more order on the position's side at market: the entry becomes the size-weighted average, exits move with it. */
+  private addTo(o: Open, book: Book, block: number) {
+    const price = o.side === "buy" ? book.ask : book.bid, add = config.tradeSize, dir = o.side === "buy" ? 1 : -1;
+    o.entry = (o.entry * o.size + price * add) / (o.size + add);
+    o.size += add;
+    o.adds++;
+    o.tp = o.entry * (1 + (dir * this.tpPct) / 100);
+    o.sl = o.entry * (1 - (dir * this.slPct) / 100);
+    if (o.who !== "jev") return { quote: null, fill: null };
+    const fee = add * price * config.spike.takerFeeRate;
+    this.feesUsd += fee;
+    this.realized -= fee;
+    this.totals.quotes++; this.totals.fills++;
+    const quote: Quote = { side: o.side, price, size: add, txHash: null, ref: null, gasMon: 0, cancel: [], status: "sim", orderId: null, capped: false };
+    const fill: Fill = { side: o.side, size: add, price, txHash: null, orderId: -block, simulated: true, fee };
+    return { quote, fill };
   }
 
   /** Market entry, simulated at the touch: a buy pays the ask, a sell gets the bid. */
   private openPos(who: Who, side: Side, book: Book, block: number) {
     const entry = side === "buy" ? book.ask : book.bid, size = config.tradeSize;
     const dir = side === "buy" ? 1 : -1;
-    const o: Open = { who, side, entry, size, openedAt: block, spikeBlock: block, tp: entry * (1 + (dir * this.tpPct) / 100), sl: entry * (1 - (dir * this.slPct) / 100) };
+    const o: Open = { who, side, entry, size, adds: 0, openedAt: block, spikeBlock: block, tp: entry * (1 + (dir * this.tpPct) / 100), sl: entry * (1 - (dir * this.slPct) / 100) };
     this.open.set(who, o);
     if (who !== "jev") return { quote: null, fill: null };
     const fee = size * entry * config.spike.takerFeeRate;
@@ -336,7 +402,7 @@ export class SpikeTrader {
     const pnlUsd = dir * (exit - o.entry) * o.size - fees;
     const pnlPct = (pnlUsd / (o.entry * o.size)) * 100; // on notional, fees included
     this.closed[o.who]++;
-    const row: TradeRow = { type: "trade", instId: this.venue.info.market, who: o.who, side: o.side, spikeBlock: o.spikeBlock, openedAt: o.openedAt, closedAt: block, heldMin: round((block - o.openedAt) / 60, 1), entry: o.entry, exit, reason, pnlPct: round(pnlPct, 4), roePct: round(pnlPct * config.okx.leverage, 2), pnlUsd: round(pnlUsd, 5), ts: Date.now() };
+    const row: TradeRow = { type: "trade", instId: this.venue.info.market, who: o.who, side: o.side, spikeBlock: o.spikeBlock, openedAt: o.openedAt, closedAt: block, heldMin: round((block - o.openedAt) / 60, 1), entry: o.entry, exit, size: o.size, adds: o.adds, reason, pnlPct: round(pnlPct, 4), roePct: round(pnlPct * config.okx.leverage, 2), pnlUsd: round(pnlUsd, 5), ts: Date.now() };
     this.tradeRows.push(row);
     this.log(row);
     if (o.who !== "jev") return { quote: null, fill: null, pnlPct };
@@ -345,7 +411,7 @@ export class SpikeTrader {
     this.realized += dir * (exit - o.entry) * o.size - exitFee;
     this.totals.quotes++; this.totals.fills++;
     const side: Side = long ? "sell" : "buy";
-    const quote: Quote = { side, price: exit, size: o.size, txHash: null, ref: null, gasMon: 0, cancel: [], status: "sim", orderId: null, capped: false, close: reason === "stop-loss" ? "position-stop" : "position-take" };
+    const quote: Quote = { side, price: exit, size: o.size, txHash: null, ref: null, gasMon: 0, cancel: [], status: "sim", orderId: null, capped: false, close: reason === "stop-loss" || reason === "reverse" ? "position-stop" : "position-take" };
     const fill: Fill = { side, size: o.size, price: exit, txHash: null, orderId: -block, simulated: true, fee: exitFee };
     return { quote, fill, pnlPct };
   }
