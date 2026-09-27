@@ -267,7 +267,20 @@ export class SpikeTrader {
       while (this.hist.length && this.hist[0]!.b < block - keep) this.hist.shift();
       let quote: Quote | null = null, fill: Fill | null = null, decision: Decision | null = null, note = "";
 
-      // Exits first, for Jev and the shadows.
+      // Live: match the exchange first (exits that fired there, trades made in the OKX app).
+      if (this.exec) {
+        const res = await this.syncPosition(book, block);
+        if (res) {
+          ({ quote, fill } = res);
+          const sg = (n: number, d: number) => `${n >= 0 ? "+" : ""}${n.toFixed(d)}`;
+          const o = this.open.get("jev");
+          note = res.reason === "manual-add" ? `MANUAL add: position now ${o?.size} at ${o?.entry}`
+            : res.reason === "manual-open" ? `MANUAL position taken over: ${o?.side === "buy" ? "long" : "short"} ${o?.size} at ${o?.entry}`
+            : `EXIT ${res.reason} ${sg(res.pnlPct, 3)}% (ROE ${(res.pnlPct * config.okx.leverage).toFixed(1)}%, ${sg(res.pnlUsd, 4)} ${this.venue.info.quoteCcy})${o ? `, ${o.size} left open` : ""}`;
+        }
+      }
+
+      // Exits, for Jev and the shadows.
       for (const o of [...this.open.values()]) {
         if (o.who === "jev" && this.exec) {
           const res = await this.liveExit(o, book, block);
@@ -427,6 +440,7 @@ export class SpikeTrader {
 
   private async liveOpen(side: Side, block: number) {
     const r = await this.exec!.marketOrder(side, config.tradeSize, false);
+    this.ownOrders.add(r.ordId);
     const dir = side === "buy" ? 1 : -1;
     const o: Open = { who: "jev", side, entry: r.avgPx, size: r.size, adds: 0, openedAt: block, spikeBlock: block, openedTs: Date.now() - 1000, tp: r.avgPx * (1 + (dir * this.tpPct) / 100), sl: r.avgPx * (1 - (dir * this.slPct) / 100) };
     o.entryFees = r.fee;
@@ -438,6 +452,7 @@ export class SpikeTrader {
 
   private async liveAdd(o: Open, block: number) {
     const r = await this.exec!.marketOrder(o.side, config.tradeSize, false);
+    this.ownOrders.add(r.ordId);
     const pos = await this.exec!.positionNow();
     const dir = o.side === "buy" ? 1 : -1;
     o.entry = pos.avgPx || (o.entry * o.size + r.avgPx * r.size) / (o.size + r.size);
@@ -456,35 +471,131 @@ export class SpikeTrader {
     await this.exec!.setExits(null);
     const side: Side = o.side === "buy" ? "sell" : "buy";
     const r = await this.exec!.marketOrder(side, o.size, true);
+    this.ownOrders.add(r.ordId);
     const res = this.record(o, r.avgPx, r.fee, reason, block);
     return { ...res, ...this.orderEvent(side, r.avgPx, r.size, r.fee, r.ordId, block, reason) };
   }
 
   /**
-   * Each tick while Jev holds a position: the exchange may have closed it (the OCO triggered, or by hand), so
-   * check the position every 2 s and book the exit from the actual fills. Then the time limit, and the
+   * Each tick while Jev holds a position: every 2 s the exchange's position is compared with the bot's (see
+   * syncPosition: the OCO may have fired, or someone traded in the OKX app). Then the time limit, and the
    * take-profit / stop when they are not on the exchange.
    */
   private async liveExit(o: Open, book: Book, block: number) {
-    if (block - this.posCheckedAt >= 2) {
-      this.posCheckedAt = block;
-      const pos = await this.exec!.positionNow();
-      if (pos.size === 0) {
-        const closeSide: Side = o.side === "buy" ? "sell" : "buy";
-        const fills = await this.exec!.fillsSince(o.openedTs ?? 0, closeSide);
-        const qty = fills.reduce((a, f) => a + f.size, 0);
-        const px = qty ? fills.reduce((a, f) => a + f.px * f.size, 0) / qty : book.mid;
-        const fee = fills.reduce((a, f) => a + f.fee, 0);
-        const reason = Math.abs(px - o.tp) <= Math.abs(px - o.sl) ? "take-profit" : "stop-loss";
-        this.open.delete("jev");
-        const res = this.record(o, px, fee, reason, block, true);
-        return { ...res, reason, ...this.orderEvent(closeSide, px, o.size, fee, "exchange", block, reason) };
-      }
-    }
     const r = this.exitReason(o, book, block);
     if (!r || (r !== "time" && o.exitsOnExchange)) return null;
     const res = await this.liveClose(o, block, r);
     return { ...res, reason: r };
+  }
+
+  /** Orders the bot placed itself: their fills are booked when placed, so the sync skips them. */
+  private ownOrders = new Set<string>();
+  /** Fills the sync has booked already (by id). */
+  private bookedFills = new Set<string>();
+  /** The exchange size of the last check that disagreed with the bot: acted on only when the next check agrees. */
+  private mismatch: number | null = null;
+
+  /**
+   * Every 2 s (live): make the bot's position match the exchange's, which is the truth. A difference must show
+   * on two checks in a row (the exchange's position can lag an order by a moment). Then:
+   * - closed on the exchange: booked from the real fills, as "take-profit" / "stop-loss" if our OCO fired,
+   *   "manual" otherwise (closed in the OKX app);
+   * - smaller: the part closed by hand is booked as its own "manual" trade, the rest stays open;
+   * - bigger (bought more by hand): the position takes the exchange's size and average entry, exits move with it;
+   * - the other side, or a position while the bot is flat: the bot's is booked "manual" and it takes over the
+   *   one on the exchange, with its own take-profit, stop and time limit.
+   * With the size unchanged, an OCO canceled by hand is placed again.
+   */
+  private async syncPosition(book: Book, block: number) {
+    if (block - this.posCheckedAt < 2) return null;
+    this.posCheckedAt = block;
+    const exec = this.exec!;
+    const pos = await exec.positionNow();
+    let o = this.open.get("jev");
+    const mine = o ? (o.side === "buy" ? 1 : -1) * o.size : 0;
+    const eps = 1e-9 * Math.max(1, Math.abs(pos.size), Math.abs(mine));
+    if (Math.abs(pos.size - mine) <= eps) {
+      this.mismatch = null;
+      if (o?.exitsOnExchange && exec.exitsState && (await exec.exitsState()) === "gone") {
+        console.warn("spike: the take-profit / stop were canceled on the exchange; placing them again");
+        o.exitsOnExchange = await exec.setExits({ side: o.side, tp: o.tp, sl: o.sl });
+      }
+      return null;
+    }
+    if (this.mismatch === null || Math.abs(this.mismatch - pos.size) > eps) { this.mismatch = pos.size; return null; }
+    this.mismatch = null;
+
+    let res: { quote: Quote; fill: Fill; pnlPct: number; pnlUsd: number; reason: string } | null = null;
+    const sameSide = o && pos.size !== 0 && Math.sign(pos.size) === Math.sign(mine);
+    if (o && sameSide && Math.abs(pos.size) > o.size) {
+      // Bought more by hand: the exchange's size and average entry, exits moved to it.
+      const qty = Math.abs(pos.size) - o.size;
+      const f = await this.outsideFills(o.side, qty, o.openedTs ?? 0, book);
+      const dir = o.side === "buy" ? 1 : -1;
+      o.size = Math.abs(pos.size);
+      o.entry = pos.avgPx || o.entry;
+      o.entryFees = (o.entryFees ?? 0) + f.fee;
+      o.tp = o.entry * (1 + (dir * this.tpPct) / 100);
+      o.sl = o.entry * (1 - (dir * this.slPct) / 100);
+      this.feesUsd += f.fee; this.realized -= f.fee;
+      o.exitsOnExchange = await exec.setExits({ side: o.side, tp: o.tp, sl: o.sl });
+      console.log(`spike: ${qty} ${this.venue.info.base} added outside the bot; position now ${o.size} at ${o.entry}`);
+      return { ...this.orderEvent(o.side, f.px, qty, f.fee, "manual", block), pnlPct: 0, pnlUsd: 0, reason: "manual-add" };
+    }
+    if (o) {
+      // Closed (all or part), or turned to the other side: book what was closed.
+      const closeSide: Side = o.side === "buy" ? "sell" : "buy";
+      const qty = sameSide ? o.size - Math.abs(pos.size) : o.size;
+      const state = sameSide ? null : exec.exitsState ? await exec.exitsState().catch(() => null) : undefined;
+      // No exitsState (older exec): the level nearest the exit price says which fired.
+      const f = await this.outsideFills(closeSide, qty, o.openedTs ?? 0, book);
+      const reason = state === "tp" ? "take-profit" : state === "sl" ? "stop-loss" : state === undefined ? (Math.abs(f.px - o.tp) <= Math.abs(f.px - o.sl) ? "take-profit" : "stop-loss") : "manual";
+      if (sameSide) {
+        const part: Open = { ...o, size: qty, entryFees: ((o.entryFees ?? 0) * qty) / o.size };
+        o.entryFees = (o.entryFees ?? 0) - part.entryFees!;
+        o.size = Math.abs(pos.size);
+        const r = this.record(part, f.px, f.fee, reason, block, true);
+        console.log(`spike: ${qty} ${this.venue.info.base} closed outside the bot; ${o.size} left open`);
+        return { ...r, reason, ...this.orderEvent(closeSide, f.px, qty, f.fee, "manual", block, reason) };
+      }
+      await exec.setExits(null);
+      this.open.delete("jev");
+      const r = this.record(o, f.px, f.fee, reason, block, true);
+      res = { ...r, reason, ...this.orderEvent(closeSide, f.px, qty, f.fee, reason === "manual" ? "manual" : "exchange", block, reason) };
+      o = undefined;
+      if (pos.size === 0) return res;
+    }
+    // A position the bot does not hold (opened by hand, or what is left after turning): the bot takes it over.
+    const side: Side = pos.size > 0 ? "buy" : "sell", dir = pos.size > 0 ? 1 : -1, size = Math.abs(pos.size);
+    const entry = pos.avgPx || book.mid;
+    const fee = config.spike.takerFeeRate * entry * size;
+    const n: Open = { who: "jev", side, entry, size, adds: 0, openedAt: block, spikeBlock: -1, openedTs: Date.now() - 1000, entryFees: fee, tp: entry * (1 + (dir * this.tpPct) / 100), sl: entry * (1 - (dir * this.slPct) / 100) };
+    this.open.set("jev", n);
+    this.feesUsd += fee; this.realized -= fee;
+    n.exitsOnExchange = await exec.setExits({ side, tp: n.tp, sl: n.sl });
+    console.log(`spike: took over a ${side === "buy" ? "long" : "short"} of ${size} ${this.venue.info.base} at ${entry} opened outside the bot`);
+    return res ?? { ...this.orderEvent(side, entry, size, fee, "manual", block), pnlPct: 0, pnlUsd: 0, reason: "manual-open" };
+  }
+
+  /**
+   * The newest fills on `side` from orders the bot did not place, not booked yet, adding up to `qty`: average
+   * price and fees. Marks them booked. Without such fills (not listed yet), the mid and the taker fee.
+   */
+  private async outsideFills(side: Side, qty: number, sinceMs: number, book: Book) {
+    const all = await this.exec!.fillsSince(sinceMs, side).catch(() => []);
+    const key = (f: (typeof all)[number]) => f.id ?? `${f.ts}:${f.px}:${f.size}`;
+    let got = 0, px = 0, fee = 0;
+    for (const f of all.filter((f) => !(f.ordId && this.ownOrders.has(f.ordId)) && !this.bookedFills.has(key(f))).reverse()) {
+      if (got >= qty - 1e-9) break;
+      const take = Math.min(f.size, qty - got);
+      px += f.px * take; fee += (f.fee * take) / f.size; got += take;
+      this.bookedFills.add(key(f));
+    }
+    if (got < qty - 1e-9) {
+      const rest = qty - got;
+      px += book.mid * rest; fee += config.spike.takerFeeRate * book.mid * rest;
+    }
+    return { px: px / qty, fee };
   }
 
   /** Book a closed Jev position at `exit` with the exit fee: the trade row, realized P&L and fees. */

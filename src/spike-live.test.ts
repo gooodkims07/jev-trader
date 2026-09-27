@@ -11,7 +11,7 @@ process.chdir(mkdtempSync(join(tmpdir(), "jev-spike-live-test-")));
 /** A live venue whose exchange is a fake: market orders fill at the touch, 0.05% fee; a position, exits, fills. */
 function liveVenue() {
   let mid = 2;
-  const ex = { pos: 0, avg: 0, orders: [] as { side: Side; size: number; reduceOnly: boolean }[], exits: [] as ({ side: Side; tp: number; sl: number } | null)[], exitsOk: true, fills: [] as { px: number; size: number; fee: number; ts: number }[] };
+  const ex = { pos: 0, avg: 0, orders: [] as { side: Side; size: number; reduceOnly: boolean }[], exits: [] as ({ side: Side; tp: number; sl: number } | null)[], exitsOk: true, exitState: "live" as "live" | "tp" | "sl" | "gone" | null, fills: [] as { px: number; size: number; fee: number; ts: number; id?: string; ordId?: string }[] };
   const book = (): Book => ({ block: 0, bid: mid - 0.0001, ask: mid + 0.0001, mid, spreadBps: 1, imbalance: 0, levels: { bids: [[mid - 0.0001, 100]], asks: [[mid + 0.0001, 100]] }, depthBps: {} });
   const exec: MarketExec = {
     async marketOrder(side, size, reduceOnly) {
@@ -23,8 +23,9 @@ function liveVenue() {
       return { ordId: `o${ex.orders.length}`, avgPx: px, size, fee: px * size * 0.0005 };
     },
     async positionNow() { return { size: ex.pos, avgPx: ex.avg }; },
-    async fillsSince() { return ex.fills; },
-    async setExits(p) { ex.exits.push(p); return p ? ex.exitsOk : true; },
+    async fillsSince(_since, side) { return ex.fills.filter((f) => (f as { side?: Side }).side === undefined || (f as { side?: Side }).side === side); },
+    async setExits(p) { ex.exits.push(p); ex.exitState = p ? "live" : null; return p ? ex.exitsOk : true; },
+    async exitsState() { return ex.exitState; },
   };
   const v = {
     info: { name: "okx", label: "OKX", market: "XRP-USDT-SWAP", symbol: "XRP-USDT PERP", base: "XRP", quoteCcy: "USDT", priceDecimals: 4, sizeDecimals: 0, clock: "tick", blockMs: 1000, txUrl: null },
@@ -70,8 +71,8 @@ test("live: when the exchange's take-profit closes the position, the exit is boo
     const t = new SpikeTrader(f.v, says("buy"), (_e, n) => { if (n) notes.push(n); });
     let b = await openLong(t, f, 2000);
     const tp = f.ex.exits.at(-1)!.tp;
-    f.ex.pos = 0; f.ex.fills = [{ px: tp, size: 5, fee: tp * 5 * 0.0005, ts: Date.now() }]; // the OCO fired on OKX
-    f.setMid(tp); await t.onBlock(b++); await t.onBlock(b++); await t.onBlock(b++);
+    f.ex.pos = 0; f.ex.exitState = "tp"; f.ex.fills = [{ px: tp, size: 5, fee: tp * 5 * 0.0005, ts: Date.now() }]; // the OCO fired on OKX
+    f.setMid(tp); b = await settle(t, b); // two checks: a difference must show twice
     expect(notes.find((n) => n.startsWith("EXIT"))).toMatch(/^EXIT take-profit \+/);
     expect(f.ex.orders.length).toBe(1); // the bot sent no close of its own
     const row = readFileSync("data/spike.jsonl", "utf8").trim().split("\n").map((l) => JSON.parse(l)).filter((r) => r.type === "trade" && r.who === "jev" && r.openedAt >= 2000).at(-1);
@@ -127,6 +128,96 @@ test("live: the session stop closes the position and halts; shutdown closes too"
     await t2.shutdown();
     expect(g.ex.pos).toBe(0);
     expect(g.ex.orders.at(-1)!.reduceOnly).toBe(true);
+  } finally { reset(); }
+});
+
+const lastJevTrade = (from: number) => readFileSync("data/spike.jsonl", "utf8").trim().split("\n").map((l) => JSON.parse(l)).filter((r) => r.type === "trade" && r.who === "jev" && r.closedAt >= from).at(-1);
+/** Blocks enough for two position checks (a difference must show twice). */
+async function settle(t: SpikeTrader, b: number) { for (let i = 0; i < 5; i++) await t.onBlock(b++); return b; }
+
+test("sync: a position closed in the OKX app is booked as manual, from the app's fills", async () => {
+  try {
+    config.tradeSize = 5; config.okx.leverage = 5; config.risk.sessionStopLoss = 0;
+    const f = liveVenue(); const notes: string[] = [];
+    const t = new SpikeTrader(f.v, says("hold"), (_e, n) => { if (n) notes.push(n); });
+    t["open"].set("jev", { who: "jev", side: "buy", entry: 2, size: 5, adds: 0, openedAt: 7000, spikeBlock: 7000, openedTs: 0, tp: 2.08, sl: 1.88, exitsOnExchange: true, entryFees: 0.005 });
+    f.ex.pos = 5; f.ex.avg = 2;
+    let b = await settle(t, 7000);
+    expect(notes.some((n) => n.startsWith("EXIT"))).toBe(false); // in step: nothing to do
+    f.setMid(2.05); f.ex.pos = 0; f.ex.exitState = "gone";
+    f.ex.fills = [{ px: 2.05, size: 5, fee: 0.005, ts: Date.now(), id: "a1", ordId: "app1", side: "sell" } as never];
+    b = await settle(t, b);
+    expect(notes.find((n) => n.startsWith("EXIT"))).toMatch(/^EXIT manual \+/);
+    expect(lastJevTrade(7000)).toMatchObject({ reason: "manual", exit: 2.05, size: 5 });
+    expect(t.snapshot().open.length).toBe(0);
+    expect(f.ex.orders.length).toBe(0); // the bot sent nothing
+  } finally { reset(); }
+});
+
+test("sync: a part closed by hand is its own manual trade; the rest stays open", async () => {
+  try {
+    config.tradeSize = 5; config.okx.leverage = 5; config.risk.sessionStopLoss = 0;
+    const f = liveVenue();
+    const t = new SpikeTrader(f.v, says("hold"), () => {});
+    t["open"].set("jev", { who: "jev", side: "buy", entry: 2, size: 5, adds: 0, openedAt: 8000, spikeBlock: 8000, openedTs: 0, tp: 2.08, sl: 1.88, exitsOnExchange: true, entryFees: 0.005 });
+    f.ex.pos = 3; f.ex.avg = 2;
+    f.ex.fills = [{ px: 2.01, size: 2, fee: 0.002, ts: Date.now(), id: "p1", ordId: "app2", side: "sell" } as never];
+    await settle(t, 8000);
+    expect(lastJevTrade(8000)).toMatchObject({ reason: "manual", exit: 2.01, size: 2 });
+    expect(t.snapshot().open[0]).toMatchObject({ size: 3, entry: 2 });
+  } finally { reset(); }
+});
+
+test("sync: more bought by hand joins the position (exchange size and entry) and the exits move", async () => {
+  try {
+    config.tradeSize = 5; config.okx.leverage = 5; config.risk.sessionStopLoss = 0;
+    const f = liveVenue(); const notes: string[] = [];
+    const t = new SpikeTrader(f.v, says("hold"), (_e, n) => { if (n) notes.push(n); });
+    t["open"].set("jev", { who: "jev", side: "buy", entry: 2, size: 5, adds: 0, openedAt: 9000, spikeBlock: 9000, openedTs: 0, tp: 2.08, sl: 1.88, exitsOnExchange: true, entryFees: 0.005 });
+    f.ex.pos = 10; f.ex.avg = 1.9;
+    await settle(t, 9000);
+    expect(t.snapshot().open[0]).toMatchObject({ size: 10, entry: 1.9, adds: 0 });
+    expect(f.ex.exits.at(-1)!.tp).toBeCloseTo(1.9 * 1.04, 9);
+    expect(notes.some((n) => n.startsWith("MANUAL add"))).toBe(true);
+  } finally { reset(); }
+});
+
+test("sync: a position opened in the app while the bot is flat is taken over, with exits", async () => {
+  try {
+    config.tradeSize = 5; config.okx.leverage = 5; config.risk.sessionStopLoss = 0;
+    const f = liveVenue();
+    const t = new SpikeTrader(f.v, says("hold"), () => {});
+    f.ex.pos = -4; f.ex.avg = 2.1;
+    await settle(t, 10000);
+    expect(t.snapshot().open[0]).toMatchObject({ side: "sell", size: 4, entry: 2.1 });
+    expect(f.ex.exits.at(-1)).toMatchObject({ side: "sell" });
+    expect(f.ex.exits.at(-1)!.sl).toBeCloseTo(2.1 * 1.06, 9);
+  } finally { reset(); }
+});
+
+test("sync: a one-check difference (the exchange lagging) is ignored", async () => {
+  try {
+    config.tradeSize = 5; config.okx.leverage = 5; config.risk.sessionStopLoss = 0;
+    const f = liveVenue();
+    const t = new SpikeTrader(f.v, says("hold"), () => {});
+    f.ex.pos = 5; f.ex.avg = 2;
+    await t.onBlock(11000);
+    f.ex.pos = 0;
+    await t.onBlock(11002);
+    expect(t.snapshot().open.length).toBe(0);
+  } finally { reset(); }
+});
+
+test("sync: exits canceled by hand are placed again", async () => {
+  try {
+    config.tradeSize = 5; config.okx.leverage = 5; config.risk.sessionStopLoss = 0;
+    const f = liveVenue();
+    const t = new SpikeTrader(f.v, says("hold"), () => {});
+    t["open"].set("jev", { who: "jev", side: "buy", entry: 2, size: 5, adds: 0, openedAt: 12000, spikeBlock: 12000, openedTs: 0, tp: 2.08, sl: 1.88, exitsOnExchange: true, entryFees: 0.005 });
+    f.ex.pos = 5; f.ex.avg = 2; f.ex.exitState = "gone";
+    await t.onBlock(12000);
+    expect(f.ex.exits.at(-1)).toEqual({ side: "buy", tp: 2.08, sl: 1.88 });
+    expect(f.ex.exitState as string).toBe("live");
   } finally { reset(); }
 });
 

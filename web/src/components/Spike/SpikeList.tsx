@@ -22,7 +22,7 @@ function choice(s: SpikeRow, t: T): { text: string; colour: string } {
 
 function outcome(s: SpikeRow, t: T): { text: string; cls: string } {
   if (s.trade) {
-    const r = s.trade.reason === "take-profit" ? "TP" : s.trade.reason === "stop-loss" ? "SL" : s.trade.reason === "reverse" ? "REV" : s.trade.reason === "switch" ? "SW" : t("spike.time");
+    const r = s.trade.reason === "take-profit" ? "TP" : s.trade.reason === "stop-loss" ? "SL" : s.trade.reason === "reverse" ? "REV" : s.trade.reason === "switch" ? "SW" : s.trade.reason === "manual" ? t("spike.manual") : t("spike.time");
     const sg = (n: number, d: number) => `${n >= 0 ? "+" : ""}${n.toFixed(d)}`;
     return { text: `${r} ${sg(s.trade.roePct, 1)}% ${sg(s.trade.pnlUsd, 3)}`, cls: s.trade.pnlUsd >= 0 ? styles.pos : styles.neg };
   }

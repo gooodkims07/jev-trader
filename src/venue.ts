@@ -111,14 +111,22 @@ export interface MarketExec {
   marketOrder(side: Side, size: number, reduceOnly: boolean): Promise<MarketFill>;
   /** The exchange's position now: signed size (base asset, + long) and average entry. */
   positionNow(): Promise<{ size: number; avgPx: number }>;
-  /** Our fills on `side` since `sinceMs`, oldest first: price, size (base), fee (quote, cost). */
-  fillsSince(sinceMs: number, side: Side): Promise<{ px: number; size: number; fee: number; ts: number }[]>;
+  /**
+   * Our fills on `side` since `sinceMs`, oldest first: price, size (base), fee (quote, cost). `id` is unique per
+   * fill and `ordId` names the order, so fills from orders placed elsewhere (the OKX app) can be told apart.
+   */
+  fillsSince(sinceMs: number, side: Side): Promise<{ px: number; size: number; fee: number; ts: number; id?: string; ordId?: string }[]>;
   /**
    * The exchange-side exits for the whole position (take-profit and stop as one OCO, market on trigger), or
    * none. Replaces whatever we had. Resolves true if placed (false if the exchange refused, e.g. a trigger
    * already passed): then the strategy must watch the levels itself.
    */
   setExits(p: { side: Side; tp: number; sl: number } | null): Promise<boolean>;
+  /**
+   * What became of the exits setExits placed: "live" still waiting, "tp" / "sl" the one that fired, "gone"
+   * canceled (by hand, or by the exchange when the position closed another way), null when none are placed.
+   */
+  exitsState?(): Promise<"live" | "tp" | "sl" | "gone" | null>;
 }
 
 /** A coin the settings panel offers. Sizes are in the coin: `lot` is the order step, `min` the smallest order. */

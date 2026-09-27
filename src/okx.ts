@@ -171,7 +171,11 @@ export class OkxVenue implements Venue {
     await this.cancelLeftovers();
     await this.cancelLeftoverStops();
     await this.refresh();
-    if (this.posContracts !== 0) throw new Error(`okx: ${this.instId} already has a position of ${this.posContracts * this.ctVal} ${this.base}. Close it first: the bot's cap and P&L start from flat.`);
+    if (this.posContracts !== 0) {
+      // The spike strategy matches the exchange's position every 2 s and takes over one it does not hold.
+      if (config.strategy !== "spike") throw new Error(`okx: ${this.instId} already has a position of ${this.posContracts * this.ctVal} ${this.base}. Close it first: the bot's cap and P&L start from flat.`);
+      console.log(`okx: ${this.instId} has a position of ${this.posContracts * this.ctVal} ${this.base}; the spike bot takes it over, with new exits`);
+    }
     this.connectPrivate();
     console.log(`okx account · ${this.availUsdt.toFixed(2)} USDT available · ${config.okx.leverage}x ${config.okx.marginMode} · maker fee ${(this.makerFeeRate * 100).toFixed(4)}%`);
   }
@@ -315,7 +319,7 @@ export class OkxVenue implements Venue {
     }
   }
 
-  /** Our emergency stops and exit OCOs left from an earlier run. Startup refuses an open position, so any found are stale. */
+  /** Our emergency stops and exit OCOs left from an earlier run: stale (spike places new exits for a position it takes over). */
   private async cancelLeftoverStops() {
     const open = await this.api.signed<{ algoId: string; algoClOrdId: string }[]>("GET", "/api/v5/trade/orders-algo-pending", { ordType: "conditional,oco", instType: "SWAP", instId: this.instId }).catch(() => []);
     const ours = open.filter((o) => o.algoClOrdId?.startsWith(STOP_PREFIX));
@@ -378,6 +382,7 @@ export class OkxVenue implements Venue {
     return {
       marketOrder: (side, size, reduceOnly) => this.marketOrder(side, size, reduceOnly),
       positionNow: () => this.positionNow(),
+      exitsState: () => this.exitsState(),
       fillsSince: (since, side) => this.fillsSince(since, side),
       setExits: (p) => this.setExits(p),
     };
@@ -412,10 +417,18 @@ export class OkxVenue implements Venue {
   }
 
   private async fillsSince(since: number, side: Side) {
-    const fs = await this.api.signed<{ side: Side; fillPx: string; fillSz: string; fee: string; ts: string }[]>("GET", "/api/v5/trade/fills", { instType: "SWAP", instId: this.instId, limit: "100" });
+    const fs = await this.api.signed<{ side: Side; fillPx: string; fillSz: string; fee: string; ts: string; billId: string; tradeId: string; ordId: string }[]>("GET", "/api/v5/trade/fills", { instType: "SWAP", instId: this.instId, limit: "100" });
     return fs.filter((f) => f.side === side && Number(f.ts) >= since)
-      .map((f) => ({ px: Number(f.fillPx), size: Number(f.fillSz) * this.ctVal, fee: -Number(f.fee || 0), ts: Number(f.ts) }))
+      .map((f) => ({ px: Number(f.fillPx), size: Number(f.fillSz) * this.ctVal, fee: -Number(f.fee || 0), ts: Number(f.ts), id: f.billId || `${f.ordId}:${f.tradeId}`, ordId: f.ordId }))
       .sort((a, b) => a.ts - b.ts);
+  }
+
+  private async exitsState(): Promise<"live" | "tp" | "sl" | "gone" | null> {
+    if (!this.exitAlgo) return null;
+    const [a] = await this.api.signed<{ state: string; actualSide: string }[]>("GET", "/api/v5/trade/order-algo", { algoId: this.exitAlgo });
+    if (!a || a.state === "live" || a.state === "pause" || a.state === "partially_effective") return "live";
+    if (a.state === "effective") return a.actualSide === "tp" ? "tp" : a.actualSide === "sl" ? "sl" : "gone";
+    return "gone";
   }
 
   /** One OCO (take-profit and stop, market on trigger, last price) closing the whole position; replaces the last. */
