@@ -56,3 +56,47 @@ test("settings: readable always, writable only with the admin token, validated, 
     config.adminToken = saved.token; config.tradeSize = saved.size; config.maxPosition = saved.cap; config.risk.sessionStopLoss = saved.stop; config.okx.tickMs = saved.tick;
   }
 });
+
+import { instrumentHandler } from "./settings";
+
+test("coin switch: listed coins only, sizes on the new coin's lot, needs the supervisor and a flat live account, then saves and restarts", async () => {
+  const saved = { token: config.adminToken, sup: config.supervised, size: config.tradeSize, cap: config.maxPosition, inst: config.okx.instId };
+  const exits: number[] = [];
+  let closed = 0, blocker: string | null = null;
+  const v = {
+    ...venue, shutdown: async () => {},
+    switchBlocker: () => blocker,
+    instruments: async () => [
+      { instId: "XRP-USDT-SWAP", base: "XRP", last: 1.5, volUsd24h: 3e8, lot: 1, min: 1, tickSz: "0.0001" },
+      { instId: "BTC-USDT-SWAP", base: "BTC", last: 110000, volUsd24h: 2e9, lot: 0.0001, min: 0.0001, tickSz: "0.1" },
+    ],
+  } as unknown as Venue;
+  try {
+    config.adminToken = "s3cret-token"; config.tradeSize = 5; config.maxPosition = 25;
+    const h = instrumentHandler(v, () => { closed++; }, (c) => exits.push(c));
+    const get = await h(new Request("http://x/instrument"));
+    expect((get.body as any).choices.map((c: any) => c.instId)).toEqual(["XRP-USDT-SWAP", "BTC-USDT-SWAP"]);
+    const req = (b: unknown) => new Request("http://x/instrument", { method: "POST", body: JSON.stringify(b), headers: { authorization: "Bearer s3cret-token" } });
+
+    config.supervised = false;
+    expect((await h(req({ instId: "BTC-USDT-SWAP", tradeSize: 0.0001 }))).status).toBe(409); // cannot restart itself
+    config.supervised = true;
+    blocker = "a position of 5 XRP is open";
+    expect((await h(req({ instId: "BTC-USDT-SWAP", tradeSize: 0.0001 }))).status).toBe(409);
+    blocker = null;
+
+    const bad = await h(req({ instId: "BTC-USDT-SWAP", tradeSize: 0.00015 }));
+    expect((bad.body as any).errors).toEqual({ tradeSize: "must be a multiple of 0.0001 BTC" });
+    expect((await h(req({ instId: "DOGE-USDT-SWAP", tradeSize: 1 }))).status).toBe(400);
+
+    const ok = await h(req({ instId: "BTC-USDT-SWAP", tradeSize: 0.0001 }));
+    expect(ok.status).toBe(202);
+    expect(ok.body).toMatchObject({ restarting: true, instId: "BTC-USDT-SWAP", tradeSize: 0.0001, maxPosition: 0.0005 }); // cap scaled with the size
+    await Bun.sleep(400);
+    expect(closed).toBe(1);
+    expect(exits).toEqual([75]);
+    expect(JSON.parse(readFileSync("data/settings.json", "utf8"))).toMatchObject({ "okx.instId": "BTC-USDT-SWAP", sizesFor: "BTC-USDT-SWAP", tradeSize: 0.0001 });
+  } finally {
+    config.adminToken = saved.token; config.supervised = saved.sup; config.tradeSize = saved.size; config.maxPosition = saved.cap; config.okx.instId = saved.inst;
+  }
+});

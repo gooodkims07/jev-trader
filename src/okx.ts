@@ -17,7 +17,7 @@
  */
 import { config } from "./config";
 import { OkxApi, OkxError, newClOrdId, okxWs, stepDecimals } from "./okx-api";
-import { bookFromLevels, summarize, type Book, type MakerFill, type OrderId, type Quote, type QuoteResult, type Side, type TradePrint, type TradeSource, type TradeSummary, type Venue, type VenueInfo } from "./venue";
+import { bookFromLevels, summarize, type InstrumentChoice, type Book, type MakerFill, type OrderId, type Quote, type QuoteResult, type Side, type TradePrint, type TradeSource, type TradeSummary, type Venue, type VenueInfo } from "./venue";
 
 const RING = 500;
 const WARMUP_TRADES = 500;
@@ -371,6 +371,34 @@ export class OkxVenue implements Venue {
   }
 
   extras() { return { fundingRatePct: this.fundingRatePct }; }
+
+  private instCache: { at: number; list: InstrumentChoice[] } | null = null;
+
+  /** Live USDT-margined perpetuals, most traded first (top 60), cached for 5 minutes. Public data only. */
+  async instruments(): Promise<InstrumentChoice[]> {
+    if (this.instCache && Date.now() - this.instCache.at < 300_000) return this.instCache.list;
+    const [insts, tickers] = await Promise.all([
+      this.api.public<(Instrument & { ctType: string })[]>("/api/v5/public/instruments", { instType: "SWAP" }),
+      this.api.public<{ instId: string; last: string; volCcy24h: string }[]>("/api/v5/market/tickers", { instType: "SWAP" }),
+    ]);
+    const tick = new Map(tickers.map((t) => [t.instId, t]));
+    const list = insts
+      .filter((i) => i.instId.endsWith("-USDT-SWAP") && i.state === "live" && i.ctType === "linear" && tick.has(i.instId))
+      .map((i) => {
+        const t = tick.get(i.instId)!, ct = Number(i.ctVal);
+        return { instId: i.instId, base: i.ctValCcy, last: Number(t.last), volUsd24h: Math.round(Number(t.volCcy24h) * Number(t.last)), lot: round(ct * Number(i.lotSz), 10), min: round(ct * Number(i.minSz), 10), tickSz: i.tickSz };
+      })
+      .sort((a, b) => b.volUsd24h - a.volUsd24h)
+      .slice(0, 60);
+    this.instCache = { at: Date.now(), list };
+    return list;
+  }
+
+  /** A live run switches coins only when flat: the new coin's startup would not see this coin's position. */
+  switchBlocker(): string | null {
+    if (!this.live) return null;
+    return this.posContracts !== 0 ? `a position of ${this.posContracts * this.ctVal} ${this.base} is open on ${this.instId}` : null;
+  }
 
   checkSize(size: number): string | null {
     const lots = size / this.ctVal / this.lotSz;

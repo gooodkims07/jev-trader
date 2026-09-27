@@ -106,8 +106,8 @@ interface Open { who: Who; side: Side; entry: number; size: number; openedAt: nu
 
 const LOG = "data/spike.jsonl";
 /** A row of data/spike.jsonl. */
-interface SpikeRow { type: "spike"; block: number; ts: number; window: "1m" | "3m"; direction: "up" | "down"; movePct: number; mid: number; asked: boolean; jev: { action: Action; probabilities: Record<Action, number>; latencyMs: number } | null }
-interface TradeRow { type: "trade"; who: Who; side: Side; spikeBlock: number; openedAt: number; closedAt: number; heldMin: number; entry: number; exit: number; reason: string; pnlPct: number; roePct: number; pnlUsd: number; ts?: number }
+interface SpikeRow { type: "spike"; instId?: string; block: number; ts: number; window: "1m" | "3m"; direction: "up" | "down"; movePct: number; mid: number; asked: boolean; jev: { action: Action; probabilities: Record<Action, number>; latencyMs: number } | null }
+interface TradeRow { type: "trade"; instId?: string; who: Who; side: Side; spikeBlock: number; openedAt: number; closedAt: number; heldMin: number; entry: number; exit: number; reason: string; pnlPct: number; roePct: number; pnlUsd: number; ts?: number }
 
 /** What the dashboard's spike panels read from GET /spike. */
 export interface SpikeSnapshot {
@@ -152,9 +152,11 @@ export class SpikeTrader {
   ) {
     if (venue.live) throw new Error("STRATEGY=spike is dry run only for now: set DRY_RUN=true");
     mkdirSync("data", { recursive: true });
+    // Only this coin's history: rows from before coins were recorded were all XRP-USDT-SWAP.
+    const mine = (r: { instId?: string }) => (r.instId ?? "XRP-USDT-SWAP") === venue.info.market;
     if (existsSync(LOG)) for (const line of readFileSync(LOG, "utf8").split("\n")) {
       if (!line.trim()) continue;
-      try { const r = JSON.parse(line); if (r.type === "spike") this.spikeRows.push(r); else if (r.type === "trade") this.tradeRows.push(r); } catch {}
+      try { const r = JSON.parse(line); if (!mine(r)) continue; if (r.type === "spike") this.spikeRows.push(r); else if (r.type === "trade") this.tradeRows.push(r); } catch {}
     }
   }
 
@@ -231,7 +233,7 @@ export class SpikeTrader {
           else ({ quote, fill } = this.openPos("jev", decision.action, book, block));
           note = `SPIKE ${spike.direction} ${spike.movePct.toFixed(2)}% in ${spike.window} -> ${decision.action === "hold" ? "stay out" : decision.action === followSide ? `${decision.action} (follow)` : `${decision.action} (fade)`}`;
         } else note = `SPIKE ${spike.direction} ${spike.movePct.toFixed(2)}% in ${spike.window} (in a position: not asked)`;
-        const row: SpikeRow = { type: "spike", block, ts: Date.now(), window: spike.window, direction: spike.direction, movePct: spike.movePct, mid: book.mid, asked: !!decision, jev: decision && { action: decision.action, probabilities: decision.probabilities, latencyMs: Math.round(decision.latencyMs) } };
+        const row: SpikeRow = { type: "spike", instId: this.venue.info.market, block, ts: Date.now(), window: spike.window, direction: spike.direction, movePct: spike.movePct, mid: book.mid, asked: !!decision, jev: decision && { action: decision.action, probabilities: decision.probabilities, latencyMs: Math.round(decision.latencyMs) } };
         this.spikeRows.push(row);
         this.log(row);
       }
@@ -249,6 +251,13 @@ export class SpikeTrader {
     if (!h.length || h[0]!.b > target) return null;
     for (let i = h.length - 1; i >= 0; i--) if (h[i]!.b <= target) return h[i]!.mid;
     return null;
+  }
+
+  /** Before the coin changes: close every simulated position at the touch (reason "switch") so it is recorded. */
+  async closeAllForSwitch() {
+    if (!this.open.size) return;
+    const book = await this.venue.readBook();
+    for (const o of [...this.open.values()]) this.close(o, book, this.lastBlock, "switch");
   }
 
   /** A move of at least move1mPct over 1 minute or move3mPct over 3 minutes, needing 3 minutes of history. */
@@ -317,7 +326,7 @@ export class SpikeTrader {
     const pnlUsd = dir * (exit - o.entry) * o.size - fees;
     const pnlPct = (pnlUsd / (o.entry * o.size)) * 100; // on notional, fees included
     this.closed[o.who]++;
-    const row: TradeRow = { type: "trade", who: o.who, side: o.side, spikeBlock: o.spikeBlock, openedAt: o.openedAt, closedAt: block, heldMin: round((block - o.openedAt) / 60, 1), entry: o.entry, exit, reason, pnlPct: round(pnlPct, 4), roePct: round(pnlPct * config.okx.leverage, 2), pnlUsd: round(pnlUsd, 5), ts: Date.now() };
+    const row: TradeRow = { type: "trade", instId: this.venue.info.market, who: o.who, side: o.side, spikeBlock: o.spikeBlock, openedAt: o.openedAt, closedAt: block, heldMin: round((block - o.openedAt) / 60, 1), entry: o.entry, exit, reason, pnlPct: round(pnlPct, 4), roePct: round(pnlPct * config.okx.leverage, 2), pnlUsd: round(pnlUsd, 5), ts: Date.now() };
     this.tradeRows.push(row);
     this.log(row);
     if (o.who !== "jev") return { quote: null, fill: null, pnlPct };

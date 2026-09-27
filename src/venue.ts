@@ -99,6 +99,9 @@ export interface TradeSource {
   drainFills(): MakerFill[];
 }
 
+/** A coin the settings panel offers. Sizes are in the coin: `lot` is the order step, `min` the smallest order. */
+export interface InstrumentChoice { instId: string; base: string; last: number; volUsd24h: number; lot: number; min: number; tickSz: string }
+
 /** What the dashboard needs to label a venue. */
 export interface VenueInfo {
   name: "kuru" | "okx";
@@ -158,6 +161,10 @@ export interface Venue {
    * size in the base asset, average entry). Optional; OKX places its emergency stop here.
    */
   protect?(position: { mon: number; entry: number | null }): void;
+  /** Coins this venue can trade instead, for the settings panel (OKX: USDT perpetuals by 24 h volume). */
+  instruments?(): Promise<InstrumentChoice[]>;
+  /** Why the coin cannot be switched right now (e.g. a live position is open), or null. */
+  switchBlocker?(): string | null;
   /** Why this order size is not tradable here, or null if it is (e.g. OKX lot size). For the settings panel. */
   checkSize?(size: number): string | null;
   /** Take these resting orders off the book without placing one (the model chose to skip). Resolves to the ids gone. */

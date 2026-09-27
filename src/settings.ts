@@ -12,7 +12,10 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { timingSafeEqual } from "node:crypto";
 import { config } from "./config";
-import type { Venue } from "./venue";
+import type { InstrumentChoice, Venue } from "./venue";
+
+/** Exit code asking scripts/run.sh to start the bot again (it re-reads data/settings.json). */
+export const RESTART_CODE = 75;
 
 const FILE = "data/settings.json";
 
@@ -44,8 +47,14 @@ const DEFS: Def[] = [
 export function applySavedSettings() {
   if (!existsSync(FILE)) return;
   try {
-    const saved = JSON.parse(readFileSync(FILE, "utf8")) as Record<string, number>;
+    const saved = JSON.parse(readFileSync(FILE, "utf8")) as Record<string, number> & { "okx.instId"?: string; sizesFor?: string };
     const applied: string[] = [];
+    // The coin comes first: sizes are in it. Saved sizes count as chosen for a coin only if saved with it.
+    if (typeof saved["okx.instId"] === "string" && /^[A-Z0-9]+-USDT-SWAP$/.test(saved["okx.instId"])) {
+      config.okx.instId = saved["okx.instId"];
+      applied.push(`okx.instId=${config.okx.instId}`);
+    }
+    if (saved.sizesFor && saved.sizesFor === config.okx.instId) config.sizesSetForAnyCoin = true;
     for (const d of DEFS) {
       const v = saved[d.key];
       if (typeof v !== "number" || v < d.min || v > d.max || (d.options && !d.options.includes(v))) continue;
@@ -110,11 +119,70 @@ export function settingsHandler(venue: Venue) {
     if (Object.keys(errors).length) return { status: 400, body: { error: "invalid", errors } };
 
     for (const [d, v] of next) d.set(v);
-    const saved: Record<string, number> = {};
-    for (const d of DEFS) saved[d.key] = d.get();
-    mkdirSync("data", { recursive: true });
-    writeFileSync(FILE, JSON.stringify(saved, null, 2) + "\n");
+    persist();
     console.log(`settings changed from the dashboard: ${[...next].map(([d, v]) => `${d.key}=${v}`).join(" ")}`);
     return { status: 200, body: view() };
+  };
+}
+
+/** Write every setting, plus the coin and the coin the sizes were chosen for, to data/settings.json. */
+function persist(extra: { "okx.instId"?: string; sizesFor?: string } = {}) {
+  let prev: Record<string, unknown> = {};
+  try { if (existsSync(FILE)) prev = JSON.parse(readFileSync(FILE, "utf8")); } catch {}
+  const out: Record<string, unknown> = {};
+  for (const d of DEFS) out[d.key] = d.get();
+  for (const k of ["okx.instId", "sizesFor"] as const) if (prev[k] !== undefined) out[k] = prev[k];
+  Object.assign(out, extra);
+  mkdirSync("data", { recursive: true });
+  writeFileSync(FILE, JSON.stringify(out, null, 2) + "\n");
+}
+
+/**
+ * GET /instrument: the coin now, its order size, and the coins on offer.
+ * POST /instrument { instId, tradeSize, maxPosition? } with the admin token: validate against the new coin's
+ * lot and minimum, save, run `beforeRestart` (the spike trader closes its simulated positions), then exit
+ * with RESTART_CODE so scripts/run.sh starts the bot on the new coin. Needs that supervisor, and a live run
+ * must be flat.
+ */
+export function instrumentHandler(venue: Venue, beforeRestart: () => Promise<void> | void = () => {}, exit: (code: number) => void = (c) => process.exit(c)) {
+  const list = async (): Promise<InstrumentChoice[]> => (venue.instruments ? await venue.instruments() : []);
+  return async (req: Request): Promise<{ status: number; body: unknown }> => {
+    if (venue.info.name !== "okx" || !venue.instruments) return { status: 404, body: { error: "only OKX can switch coins" } };
+    if (req.method === "GET") {
+      let choices: InstrumentChoice[] = [];
+      try { choices = await list(); } catch (e) { return { status: 502, body: { error: `okx: ${(e as Error).message}` } }; }
+      return { status: 200, body: { current: venue.info.market, tradeSize: config.tradeSize, maxPosition: config.maxPosition, strategy: config.strategy, editable: !!config.adminToken, supervised: config.supervised, blocker: venue.switchBlocker?.() ?? null, choices } };
+    }
+    if (req.method !== "POST") return { status: 405, body: { error: "GET or POST" } };
+    if (!config.adminToken) return { status: 403, body: { error: "read-only: start the server with ADMIN_TOKEN to change settings" } };
+    if (!tokenOk(req)) return { status: 401, body: { error: "wrong or missing admin token" } };
+    if (!config.supervised) return { status: 409, body: { error: "not started by scripts/run.sh, so it cannot restart itself: set OKX_INST_ID in .env and restart" } };
+    const blocker = venue.switchBlocker?.();
+    if (blocker) return { status: 409, body: { error: `cannot switch: ${blocker}` } };
+    let body: { instId?: string; tradeSize?: number; maxPosition?: number };
+    try { body = (await req.json()) as typeof body; } catch { return { status: 400, body: { error: "body must be JSON" } }; }
+    const choice = (await list()).find((c) => c.instId === body.instId);
+    const errors: Record<string, string> = {};
+    if (!choice) errors.instId = "not an offered coin";
+    const size = Number(body.tradeSize);
+    if (choice) {
+      const lots = size / choice.lot;
+      if (!(size > 0)) errors.tradeSize = "must be above 0";
+      else if (Math.abs(lots - Math.round(lots)) > 1e-9) errors.tradeSize = `must be a multiple of ${choice.lot} ${choice.base}`;
+      else if (size < choice.min - 1e-12) errors.tradeSize = `must be at least ${choice.min} ${choice.base}`;
+    }
+    const cap = body.maxPosition === undefined ? Math.max(config.maxPosition * (size / (config.tradeSize || size)), size) : Number(body.maxPosition);
+    if (!(cap >= size)) errors.maxPosition = "must be at least the order size";
+    if (Object.keys(errors).length) return { status: 400, body: { error: "invalid", errors } };
+
+    config.tradeSize = size;
+    config.maxPosition = choice!.lot ? Number((Math.round(cap / choice!.lot) * choice!.lot).toFixed(10)) : cap;
+    persist({ "okx.instId": choice!.instId, sizesFor: choice!.instId });
+    console.log(`coin switch from the dashboard: ${venue.info.market} -> ${choice!.instId}, order ${size} ${choice!.base}, max ${config.maxPosition}; restarting`);
+    setTimeout(async () => {
+      try { await beforeRestart(); await venue.shutdown?.(); } catch (e) { console.warn(`before restart: ${(e as Error).message}`); }
+      exit(RESTART_CODE);
+    }, 300);
+    return { status: 202, body: { restarting: true, instId: choice!.instId, tradeSize: size, maxPosition: config.maxPosition } };
   };
 }

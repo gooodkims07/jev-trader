@@ -3,7 +3,7 @@ import { createModel } from "./model";
 import { Trader } from "./trader";
 import { startServer } from "./server";
 import type { Venue } from "./venue";
-import { applySavedSettings, settingsHandler } from "./settings";
+import { applySavedSettings, instrumentHandler, settingsHandler } from "./settings";
 
 applySavedSettings(); // data/settings.json from the dashboard, over .env
 
@@ -23,7 +23,7 @@ const server = startServer(
   { model: model.name, wallet: venue.account, dryRun: !venue.live, market: info.market, venue: info, startedAt: Date.now(), strategy: "mm" },
   () => trader.history,
   {},
-  { "/settings": settingsHandler(venue) },
+  { "/settings": settingsHandler(venue), "/instrument": instrumentHandler(venue) },
 );
 const trader = new Trader(
   venue,

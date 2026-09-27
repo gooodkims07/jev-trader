@@ -49,6 +49,8 @@ export const config = {
    * MAX_POSITION themselves. Otherwise a .env copied from the example would size a BTC order at 200 BTC.
    */
   sizesSetForAnyCoin: !!env("TRADE_SIZE") && !!env("MAX_POSITION"),
+  /** Started by scripts/run.sh, which restarts the bot when it exits with 75 (e.g. the dashboard changed the coin). */
+  supervised: env("JEV_SUPERVISED") === "1",
   bankrollUsd: Number(env("BANKROLL", env("BANKROLL_USD", "100"))), // used for pnlPct, in the venue's quote currency
   /** Quote this many ticks inside the touch (0 = join the best bid/ask). Never crosses: clamps to the touch when the spread is too tight. */
   quoteInsideTicks: Number(env("QUOTE_INSIDE_TICKS", "1")),

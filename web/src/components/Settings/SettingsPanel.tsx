@@ -2,6 +2,7 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLang, type Key } from "@/lib/i18n";
+import CoinPicker from "./CoinPicker";
 import styles from "./Settings.module.css";
 
 interface Field { key: string; group: "clock" | "spike" | "size" | "risk" | "mm"; value: number; min: number; max: number; step: number; unit: string; options: number[] | null }
@@ -106,6 +107,7 @@ export default function SettingsPanel({ apiUrl, onClose }: { apiUrl: string; onC
         </div>
         <div className={styles.body}>
           {view && !view.editable ? <div className={styles.notice}>{t("settings.readOnly")}</div> : null}
+          {view && view.fixed.venue === "OKX" ? <CoinPicker base={base} token={token} onRestart={onClose} /> : null}
           {GROUPS.map((g) => {
             const fs = view?.fields.filter((f) => f.group === g) ?? [];
             if (!fs.length) return null;
