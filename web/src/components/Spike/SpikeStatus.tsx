@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type { SpikeSnapshot } from "@/lib/types";
 import { useVenue } from "@/lib/venue";
 import { span, useLang } from "@/lib/i18n";
@@ -25,9 +26,25 @@ function Gauge({ label, pct, threshold }: { label: string; pct: number | null; t
 }
 
 /** Jev's open position (entry, take-profit, stop, time left), and how close the market is to the next spike. */
-export default function SpikeStatus({ snap }: { snap: SpikeSnapshot | null }) {
+export default function SpikeStatus({ snap, apiUrl }: { snap: SpikeSnapshot | null; apiUrl: string }) {
   const venue = useVenue();
   const { t } = useLang();
+  const [resetMsg, setResetMsg] = useState<string | null>(null);
+
+  // POST /spike/reset with the admin token saved in the settings panel: measure the next spike from the price now.
+  const reset = async () => {
+    let token = "";
+    try { token = localStorage.getItem("jev.adminToken") ?? ""; } catch { /* no storage */ }
+    if (!token) { setResetMsg(t("spike.resetNoToken")); return; }
+    try {
+      const r = await fetch(`${apiUrl.replace(/\/+$/, "")}/spike/reset`, { method: "POST", headers: { authorization: `Bearer ${token}` } });
+      const body = await r.json();
+      setResetMsg(r.ok ? t("spike.resetDone", { px: venue.fmtMid(body.reference) }) : r.status === 401 ? t("settings.unauthorized") : t("spike.resetFailed"));
+    } catch {
+      setResetMsg(t("spike.resetFailed"));
+    }
+    setTimeout(() => setResetMsg(null), 4000);
+  };
   const plan = snap?.plan;
   const jev = snap?.open.find((o) => o.who === "jev") ?? null;
   const px = (n: number) => n.toFixed(venue.priceDecimals);
@@ -69,7 +86,11 @@ export default function SpikeStatus({ snap }: { snap: SpikeSnapshot | null }) {
       </section>
       <section className={styles.section}>
         <div className={styles.label}>
-          <span>{t("spike.distance")}</span>
+          <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {t("spike.distance")}
+            <button type="button" className={styles.miniButton} onClick={reset}>{t("spike.reset")}</button>
+            {resetMsg ? <span className={styles.labelNote}>{resetMsg}</span> : null}
+          </span>
           <span className={styles.labelNote}>
             {snap && snap.gauge.cooldownSec > 0 ? t("spike.cooldown", { n: snap.gauge.cooldownSec }) : plan ? t("spike.trigger", { a: plan.move1mPct, b: plan.move3mPct, w1: span(t, plan.window1Sec ?? 60), w2: span(t, plan.window2Sec ?? 180) }) : ""}
           </span>

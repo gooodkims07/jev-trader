@@ -314,6 +314,21 @@ export class SpikeTrader {
     return null;
   }
 
+  /**
+   * Take the current mid as the reference for both windows: moves already made are ignored and the next spike
+   * is measured from here. Detection goes on at once (no waiting for history); real samples take over as they
+   * age past each window. Returns the reference price.
+   */
+  resetReference(): number {
+    const mid = this.lastMid;
+    if (!mid) return 0;
+    // One sample exactly a long window back (inside what onBlock keeps), one now: every window reads `mid`.
+    const back = Math.max(config.spike.window1Sec, config.spike.window2Sec);
+    this.hist = [{ b: this.lastBlock - back, mid }, { b: this.lastBlock, mid }];
+    console.log(`spike reference reset to ${mid} at block ${this.lastBlock}`);
+    return mid;
+  }
+
   /** Before the coin changes: close every position (Jev's at market when live) with reason "switch" so it is recorded. */
   async closeAllForSwitch() {
     await this.closeAll("switch");

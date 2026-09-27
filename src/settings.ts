@@ -73,7 +73,7 @@ export function applySavedSettings() {
   }
 }
 
-function tokenOk(req: Request) {
+export function tokenOk(req: Request) {
   const want = config.adminToken;
   const got = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
   if (!want || !got || got.length !== want.length) return false;

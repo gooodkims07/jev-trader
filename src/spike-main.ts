@@ -2,7 +2,7 @@
 import { config } from "./config";
 import { startServer } from "./server";
 import { SpikeTrader, createSpikeModel } from "./spike";
-import { instrumentHandler, settingsHandler } from "./settings";
+import { instrumentHandler, settingsHandler, tokenOk } from "./settings";
 import type { Venue } from "./venue";
 
 export async function runSpike(venue: Venue) {
@@ -13,7 +13,17 @@ export async function runSpike(venue: Venue) {
     { model: model.name, wallet: venue.account, dryRun: !venue.live, market: info.market, venue: info, startedAt: Date.now(), strategy: "spike" },
     () => trader.history,
     { "/spike": () => trader.snapshot() },
-    { "/settings": settingsHandler(venue), "/instrument": instrumentHandler(venue, () => trader.closeAllForSwitch()) },
+    {
+      "/settings": settingsHandler(venue),
+      "/instrument": instrumentHandler(venue, () => trader.closeAllForSwitch()),
+      // POST with the admin token: measure the next spike from the current price.
+      "/spike/reset": async (req) => {
+        if (req.method !== "POST") return { status: 405, body: { error: "POST" } };
+        if (!config.adminToken) return { status: 403, body: { error: "read-only: start the server with ADMIN_TOKEN" } };
+        if (!tokenOk(req)) return { status: 401, body: { error: "wrong or missing admin token" } };
+        return { status: 200, body: { reference: trader.resetReference() } };
+      },
+    },
   );
   let lastBeat = 0;
   const trader = new SpikeTrader(venue, model, (e, note) => {

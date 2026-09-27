@@ -234,3 +234,20 @@
   font-size: 11px;
   color: var(--muted);
 }
+
+/* small action beside a section label (e.g. reset the spike reference) */
+.miniButton {
+  appearance: none;
+  border: 1px solid var(--border-2);
+  background: transparent;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font: 500 10.5px var(--font-sans), Inter, system-ui, sans-serif;
+  letter-spacing: 0;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.miniButton:hover {
+  border-color: var(--muted-2);
+}

@@ -43,7 +43,7 @@ export default function Page() {
         {spikeMode ? (
           <div className={styles.right}>
             <div>
-              <SpikeStatus snap={spike} />
+              <SpikeStatus snap={spike} apiUrl={API_URL} />
               <SpikeCompare snap={spike} />
             </div>
             <SpikeList snap={spike} />
