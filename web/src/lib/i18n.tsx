@@ -75,6 +75,9 @@ const en = {
   "spike.flat": "flat, waiting for a spike",
   "spike.distance": "DISTANCE TO A SPIKE",
   "spike.reset": "Reset reference",
+  "spike.fromHigh": "from high",
+  "spike.fromLow": "from low",
+  "spike.extremeTrigger": "{kind} {px}, trigger {a}%",
   "spike.resetDone": "reference {px}",
   "spike.resetNoToken": "save the admin token in Settings first",
   "spike.resetFailed": "not reset",
@@ -250,6 +253,9 @@ const ko: Record<Key, string> = {
   "spike.flat": "포지션 없음, 급변 대기 중",
   "spike.distance": "급변까지 거리",
   "spike.reset": "기준 초기화",
+  "spike.fromHigh": "고점 대비",
+  "spike.fromLow": "저점 대비",
+  "spike.extremeTrigger": "{kind} {px}, 기준 {a}%",
   "spike.resetDone": "기준 {px}",
   "spike.resetNoToken": "설정에서 관리자 토큰을 먼저 저장하세요",
   "spike.resetFailed": "초기화 안 됨",
@@ -394,6 +400,8 @@ export const useLang = () => useContext(Ctx);
 
 /** A window in seconds, or a row's label ("30s", "1m"), in the viewer's language: 30 -> "30초" / "30s". */
 export function span(t: T, v: number | string): string {
+  if (v === "from high") return t("spike.fromHigh");
+  if (v === "from low") return t("spike.fromLow");
   const sec = typeof v === "number" ? v : v.endsWith("m") ? Number(v.slice(0, -1)) * 60 : Number(v.replace(/s$/, ""));
   if (!Number.isFinite(sec)) return String(v);
   return sec % 60 === 0 ? t("span.m", { n: sec / 60 }) : t("span.s", { n: sec });

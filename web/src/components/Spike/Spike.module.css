@@ -77,7 +77,7 @@
 
 .gaugeRow {
   display: grid;
-  grid-template-columns: 34px 1fr 62px;
+  grid-template-columns: 58px 1fr 62px;
   align-items: center;
   gap: 10px;
   margin-top: 8px;

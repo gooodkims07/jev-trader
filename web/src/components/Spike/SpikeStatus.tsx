@@ -93,11 +93,18 @@ export default function SpikeStatus({ snap, apiUrl }: { snap: SpikeSnapshot | nu
             {resetMsg ? <span className={styles.labelNote}>{resetMsg}</span> : null}
           </span>
           <span className={styles.labelNote}>
-            {snap && snap.gauge.cooldownSec > 0 ? t("spike.cooldown", { n: snap.gauge.cooldownSec }) : plan ? t("spike.trigger", { a: plan.move1mPct, b: plan.move3mPct, w1: span(t, plan.window1Sec ?? 60), w2: span(t, plan.window2Sec ?? 180) }) : ""}
+            {snap && snap.gauge.cooldownSec > 0 ? t("spike.cooldown", { n: snap.gauge.cooldownSec }) : snap?.gauge.extreme && plan ? t("spike.extremeTrigger", { kind: t(snap.gauge.extreme.kind === "high" ? "spike.fromHigh" : "spike.fromLow"), px: venue.fmtMid(snap.gauge.extreme.price), a: plan.move1mPct }) : plan ? t("spike.trigger", { a: plan.move1mPct, b: plan.move3mPct, w1: span(t, plan.window1Sec ?? 60), w2: span(t, plan.window2Sec ?? 180) }) : ""}
           </span>
         </div>
-        <Gauge label={span(t, plan?.window1Sec ?? 60)} pct={snap?.gauge.r1Pct ?? null} threshold={plan?.move1mPct ?? 0.5} />
-        <Gauge label={span(t, plan?.window2Sec ?? 180)} pct={snap?.gauge.r3Pct ?? null} threshold={plan?.move3mPct ?? 0.8} />
+        {snap?.gauge.extreme ? (
+          // Long or short only: one gauge, the move from the running high or low.
+          <Gauge label={t(snap.gauge.extreme.kind === "high" ? "spike.fromHigh" : "spike.fromLow")} pct={snap.gauge.r1Pct} threshold={plan?.move1mPct ?? 0.5} />
+        ) : (
+          <>
+            <Gauge label={span(t, plan?.window1Sec ?? 60)} pct={snap?.gauge.r1Pct ?? null} threshold={plan?.move1mPct ?? 0.5} />
+            <Gauge label={span(t, plan?.window2Sec ?? 180)} pct={snap?.gauge.r3Pct ?? null} threshold={plan?.move3mPct ?? 0.8} />
+          </>
+        )}
       </section>
     </>
   );

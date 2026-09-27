@@ -224,15 +224,55 @@ test("sides: long only drops the short answer from Jev's question, and no one op
     const v = venue(); const notes: string[] = [];
     const t = new SpikeTrader(v, says("sell"), (_e, n) => { if (n) notes.push(n); });
     let b = await warm(t, v, 110_000, 200, 1.5);
-    v.setMid(1.5 * 1.006); await t.onBlock(b++);          // an up spike: fade would short, follow would long
+    v.setMid(1.5 * 0.994); await t.onBlock(b++);          // long only: a 0.6% pullback from the high is the spike
+    expect(notes.at(-1)).toContain("in from high");
     expect(notes.at(-1)).toContain(": out");               // Jev's short is not allowed: stays out
     const open = t.snapshot().open.map((o) => `${o.who}:${o.side}`);
-    expect(open).toEqual(["follow:buy"]);                  // the fade short is not allowed either
+    expect(open).toEqual(["fade:buy"]);                    // follow would short the fall: not allowed
     expect(t.snapshot().plan.sides).toBe("long");
     config.spike.sides = 2;
     expect(Object.keys(spikeQuestions(info).direction.criteria)).toEqual(["sell", "hold"]);
     config.spike.sides = 0;
     expect(Object.keys(spikeQuestions(info).direction.criteria)).toEqual(["buy", "sell", "hold"]);
+  } finally {
+    config.spike.sides = saved;
+  }
+});
+
+
+test("long only: the reference follows each new high, and a pullback of the trigger from it is the spike", async () => {
+  const saved = config.spike.sides;
+  config.spike.sides = 1;
+  try {
+    const v = venue(); const notes: string[] = [];
+    const t = new SpikeTrader(v, says("buy"), (_e, n) => { if (n) notes.push(n); });
+    let b = await warm(t, v, 120_000, 5, 2);                   // the reference starts at 2
+    b = await warm(t, v, b, 5, 2.02);                           // a new high: the reference follows
+    expect(t.snapshot().gauge.extreme).toEqual({ kind: "high", price: 2.02 });
+    v.setMid(2.02 * 0.997); await t.onBlock(b++);               // -0.3% from the high: under the 0.5% trigger
+    expect(notes.some((n) => n.startsWith("SPIKE"))).toBe(false);
+    expect(t.snapshot().gauge.r1Pct).toBeCloseTo(-0.3, 6);
+    v.setMid(2.02 * 0.994); await t.onBlock(b++);               // -0.6% from the high: a spike, Jev goes long
+    expect(notes.at(-1)).toContain("SPIKE down -0.60% in from high -> buy");
+    expect(t.snapshot().gauge.extreme!.price).toBeCloseTo(2.02 * 0.994, 9); // measured from here next time
+  } finally {
+    config.spike.sides = saved;
+  }
+});
+
+test("short only: the reference follows each new low, and a bounce from it is the spike; both sides: no reference", async () => {
+  const saved = config.spike.sides;
+  config.spike.sides = 2;
+  try {
+    const v = venue(); const notes: string[] = [];
+    const t = new SpikeTrader(v, says("sell"), (_e, n) => { if (n) notes.push(n); });
+    let b = await warm(t, v, 130_000, 5, 2);
+    b = await warm(t, v, b, 5, 1.98);                            // a new low
+    expect(t.snapshot().gauge.extreme).toEqual({ kind: "low", price: 1.98 });
+    v.setMid(1.98 * 1.006); await t.onBlock(b++);
+    expect(notes.at(-1)).toContain("SPIKE up 0.60% in from low -> sell");
+    config.spike.sides = 0; await t.onBlock(b++);
+    expect(t.snapshot().gauge.extreme).toBeNull();
   } finally {
     config.spike.sides = saved;
   }

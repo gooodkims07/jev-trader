@@ -23,6 +23,14 @@ import type { Book, Fill, MarketExec, Quote, Side, Venue, VenueInfo } from "./ve
 
 const round = (x: number, d: number) => Math.round(x * 10 ** d) / 10 ** d;
 
+/** How a spike is defined now, for Jev's question. */
+function triggerWords(): string {
+  const s = config.spike;
+  if (s.sides === 1) return `Only long positions are allowed, so a spike is a pullback: the price falling at least ${s.move1mPct}% from the highest price since the last spike (or reset)`;
+  if (s.sides === 2) return `Only short positions are allowed, so a spike is a bounce: the price rising at least ${s.move1mPct}% from the lowest price since the last spike (or reset)`;
+  return `When the price moves at least ${s.move1mPct}% in ${spanWords(s.window1Sec)} or ${s.move3mPct}% in ${spanWords(s.window2Sec)}`;
+}
+
 /** Sides spikes may open now: both, long only or short only (SPIKE_SIDES). */
 export function allowedSides(): Side[] {
   return config.spike.sides === 1 ? ["buy"] : config.spike.sides === 2 ? ["sell"] : ["buy", "sell"];
@@ -76,7 +84,7 @@ export function spikeQuestions(v: VenueInfo) {
       type: "choice",
       instructions: {
         question: "The price just moved sharply (see `spike`). Go long now, go short now, or stay out?",
-        goal: `Trade short-lived spikes on the ${b}-USDT perpetual swap on ${v.label}. When the price moves at least ${config.spike.move1mPct}% in ${spanWords(config.spike.window1Sec)} or ${config.spike.move3mPct}% in ${spanWords(config.spike.window2Sec)}, you decide. Long or short opens a position at market now, paying \`plan.takerFeeBps\` each way. It closes when the price moves \`plan.takeProfitPct\` in our favour or \`plan.stopLossPct\` against us, or after \`plan.maxHoldMin\` minutes. After an up spike, long follows the move and short fades it; after a down spike it is the other way round. The stop is further away than the take-profit, so a trade has to hit its take-profit first well over half the time to pay; stay out unless one side clearly has the better odds.`,
+        goal: `Trade short-lived spikes on the ${b}-USDT perpetual swap on ${v.label}. ${triggerWords()}, you decide. Long or short opens a position at market now, paying \`plan.takerFeeBps\` each way. It closes when the price moves \`plan.takeProfitPct\` in our favour or \`plan.stopLossPct\` against us, or after \`plan.maxHoldMin\` minutes. After an up spike, long follows the move and short fades it; after a down spike it is the other way round. The stop is further away than the take-profit, so a trade has to hit its take-profit first well over half the time to pay; stay out unless one side clearly has the better odds.`,
         timing: `The order fills at market within a second. The position is then watched every tick against the mid until an exit.${positionRules()}`,
         inputs: `\`spike\` is the triggering move. \`returnsPct\` and \`recentMids\` show the path over the last 5 minutes. \`trades\` and \`recentTrades\` show taker flow over the last ${spanWords(Math.max(config.spike.window1Sec, config.spike.window2Sec))}: heavy flow in the spike's direction that is dying out can mean the move is exhausted and will give some back; flow still building can mean it continues. \`book\`, \`depth\` and \`bookImbalance\` show resting liquidity; thin depth on one side means the price moves easily that way. \`fundingRatePct\` is per funding period; positive means longs pay shorts. Sizes and every field ending in \`Mon\` are in ${b}.`,
       },
@@ -147,7 +155,8 @@ interface TradeRow { type: "trade"; instId?: string; live?: boolean; who: Who; s
 export interface SpikeSnapshot {
   plan: { sides: "both" | "long" | "short"; maxAdds: number; allowReverse: boolean; move1mPct: number; move3mPct: number; window1Sec: number; window2Sec: number; takeProfitRoePct: number; stopLossRoePct: number; takeProfitPct: number; stopLossPct: number; leverage: number; maxHoldMin: number; size: number; base: string };
   /** The mid's move now vs 1 and 3 minutes ago, in %, or null while history fills. */
-  gauge: { r1Pct: number | null; r3Pct: number | null; cooldownSec: number };
+  /** Long or short only: `extreme` is the high (long only) or low (short only) the next spike is measured from, and r1Pct the move from it. */
+  gauge: { r1Pct: number | null; r3Pct: number | null; cooldownSec: number; extreme?: { kind: "high" | "low"; price: number } | null };
   open: { who: Who; side: Side; entry: number; size: number; adds: number; tp: number; sl: number; heldMin: number; unrealizedPct: number; unrealizedRoePct: number; unrealizedUsd: number }[];
   stats: Record<Who, { trades: number; wins: number; avgPct: number; totalUsd: number; tp: number; sl: number; time: number }>;
   /** Newest first; `trade` is Jev's closed trade from that spike, if any. */
@@ -220,7 +229,9 @@ export class SpikeTrader {
     });
     return {
       plan: { sides: config.spike.sides === 1 ? "long" : config.spike.sides === 2 ? "short" : "both", maxAdds: config.spike.maxAdds, allowReverse: !!config.spike.allowReverse, move1mPct: config.spike.move1mPct, move3mPct: config.spike.move3mPct, window1Sec: config.spike.window1Sec, window2Sec: config.spike.window2Sec, takeProfitRoePct: config.spike.takeProfitRoePct, stopLossRoePct: config.spike.stopLossRoePct, takeProfitPct: this.tpPct, stopLossPct: this.slPct, leverage: config.okx.leverage, maxHoldMin: config.spike.maxHoldMin, size: config.tradeSize, base: this.venue.info.base },
-      gauge: { r1Pct: r(config.spike.window1Sec), r3Pct: r(config.spike.window2Sec), cooldownSec: Math.max(0, this.cooldownUntil - now) },
+      gauge: this.extreme && mid
+        ? { r1Pct: round((mid / this.extreme.price - 1) * 100, 3), r3Pct: null, cooldownSec: Math.max(0, this.cooldownUntil - now), extreme: this.extreme }
+        : { r1Pct: r(config.spike.window1Sec), r3Pct: r(config.spike.window2Sec), cooldownSec: Math.max(0, this.cooldownUntil - now), extreme: null },
       open: [...this.open.values()].map((o) => {
         const dir = o.side === "buy" ? 1 : -1, u = mid ? dir * (mid / o.entry - 1) * 100 : 0;
         return { who: o.who, side: o.side, entry: o.entry, size: o.size, adds: o.adds, tp: o.tp, sl: o.sl, heldMin: round((now - o.openedAt) / 60, 1), unrealizedPct: round(u, 3), unrealizedRoePct: round(u * config.okx.leverage, 2), unrealizedUsd: round(mid ? dir * (mid - o.entry) * o.size : 0, 4) };
@@ -281,8 +292,10 @@ export class SpikeTrader {
         return;
       }
 
+      this.trackExtreme(book.mid);
       const spike = block >= this.cooldownUntil ? this.detect(book) : null;
       if (spike) {
+        if (this.extreme) this.extreme = { kind: this.extreme.kind, price: book.mid }; // measure the next one from here
         this.cooldownUntil = block + config.spike.cooldownSec;
         const followSide: Side = spike.direction === "up" ? "buy" : "sell";
         const fadeSide: Side = followSide === "buy" ? "sell" : "buy";
@@ -334,8 +347,27 @@ export class SpikeTrader {
     // One sample exactly a long window back (inside what onBlock keeps), one now: every window reads `mid`.
     const back = Math.max(config.spike.window1Sec, config.spike.window2Sec);
     this.hist = [{ b: this.lastBlock - back, mid }, { b: this.lastBlock, mid }];
+    if (this.extreme) this.extreme = { kind: this.extreme.kind, price: mid };
     console.log(`spike reference reset to ${mid} at block ${this.lastBlock}`);
     return mid;
+  }
+
+  /**
+   * Long only: the reference is the highest mid since the last spike or reset (each new high replaces it).
+   * Short only: the lowest. Both sides: none (the windows decide). A change of sides starts it at the mid now.
+   */
+  private extreme: { kind: "high" | "low"; price: number } | null = null;
+  private extremeFor = 0;
+  private trackExtreme(mid: number) {
+    const sides = config.spike.sides;
+    if (sides !== this.extremeFor) {
+      this.extremeFor = sides;
+      this.extreme = sides === 1 ? { kind: "high", price: mid } : sides === 2 ? { kind: "low", price: mid } : null;
+      if (this.extreme) console.log(`spike reference: ${this.extreme.kind} from ${mid}`);
+      return;
+    }
+    if (!this.extreme) return;
+    if (this.extreme.kind === "high" ? mid > this.extreme.price : mid < this.extreme.price) this.extreme = { kind: this.extreme.kind, price: mid };
   }
 
   /** Before the coin changes: close every position (Jev's at market when live) with reason "switch" so it is recorded. */
@@ -486,6 +518,12 @@ export class SpikeTrader {
    * much history. The windows can change while running (settings); the history keeps enough for either.
    */
   detect(book: Book): SpikeState["spike"] | null {
+    // Long or short only: a pullback from the high (long) or a bounce from the low (short), of move1mPct.
+    if (this.extreme) {
+      const r = (book.mid / this.extreme.price - 1) * 100;
+      const hit = this.extreme.kind === "high" ? r <= -config.spike.move1mPct : r >= config.spike.move1mPct;
+      return hit ? { window: this.extreme.kind === "high" ? "from high" : "from low", direction: r > 0 ? "up" : "down", movePct: round(r, 3), fromPrice: this.extreme.price } : null;
+    }
     const { window1Sec: w1, window2Sec: w2 } = config.spike;
     const m1 = this.midAgo(w1), m2 = this.midAgo(w2);
     const r1 = m1 === null ? 0 : (book.mid / m1 - 1) * 100, r2 = m2 === null ? 0 : (book.mid / m2 - 1) * 100;
