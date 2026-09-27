@@ -46,6 +46,9 @@ test("settings: readable always, writable only with the admin token, validated, 
 
     expect((await h(post({ maxPosition: 3 }, "s3cret-token"))).status).toBe(400); // below the order size
 
+    // Spike windows are spike-strategy settings; this venue runs mm in tests, so they are not offered here.
+    expect((get.body as any).fields.some((f: any) => f.key === "spike.window1Sec")).toBe(false);
+
     // Tick length: OKX only, one of the offered lengths, applied at once.
     expect((get.body as any).fields.find((f: any) => f.key === "okx.tickMs").options).toEqual([1000, 3000, 5000, 10000, 15000, 30000, 60000]);
     const oddTick = await h(post({ "okx.tickMs": 2000 }, "s3cret-token"));
@@ -98,5 +101,23 @@ test("coin switch: listed coins only, sizes on the new coin's lot, needs the sup
     expect(JSON.parse(readFileSync("data/settings.json", "utf8"))).toMatchObject({ "okx.instId": "BTC-USDT-SWAP", sizesFor: "BTC-USDT-SWAP", tradeSize: 0.0001 });
   } finally {
     config.adminToken = saved.token; config.supervised = saved.sup; config.tradeSize = saved.size; config.maxPosition = saved.cap; config.okx.instId = saved.inst;
+  }
+});
+
+test("spike windows: offered lengths only, and the long window must be longer than the short one", async () => {
+  const saved = { token: config.adminToken, strat: config.strategy, w1: config.spike.window1Sec, w2: config.spike.window2Sec };
+  try {
+    config.adminToken = "s3cret-token"; config.strategy = "spike";
+    const h = settingsHandler(venue);
+    const get = await h(new Request("http://x/settings"));
+    expect((get.body as any).fields.find((f: any) => f.key === "spike.window1Sec").options).toEqual([30, 60, 120, 180, 300, 600, 900]);
+    const post = (b: unknown) => h(new Request("http://x/settings", { method: "POST", body: JSON.stringify(b), headers: { authorization: "Bearer s3cret-token" } }));
+    expect(((await post({ "spike.window1Sec": 45 })).body as any).errors).toEqual({ "spike.window1Sec": "one of 30, 60, 120, 180, 300, 600, 900" });
+    expect(((await post({ "spike.window1Sec": 300 })).body as any).errors).toEqual({ "spike.window2Sec": "must be longer than the short window" });
+    const ok = await post({ "spike.window1Sec": 30, "spike.window2Sec": 300 });
+    expect(ok.status).toBe(200);
+    expect([config.spike.window1Sec, config.spike.window2Sec]).toEqual([30, 300]);
+  } finally {
+    config.adminToken = saved.token; config.strategy = saved.strat; config.spike.window1Sec = saved.w1; config.spike.window2Sec = saved.w2;
   }
 });

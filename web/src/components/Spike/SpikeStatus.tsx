@@ -2,7 +2,7 @@
 
 import type { SpikeSnapshot } from "@/lib/types";
 import { useVenue } from "@/lib/venue";
-import { useLang } from "@/lib/i18n";
+import { span, useLang } from "@/lib/i18n";
 import styles from "./Spike.module.css";
 
 const sign = (n: number, d: number) => `${n >= 0 ? "+" : "-"}${Math.abs(n).toFixed(d)}`;
@@ -70,11 +70,11 @@ export default function SpikeStatus({ snap }: { snap: SpikeSnapshot | null }) {
         <div className={styles.label}>
           <span>{t("spike.distance")}</span>
           <span className={styles.labelNote}>
-            {snap && snap.gauge.cooldownSec > 0 ? t("spike.cooldown", { n: snap.gauge.cooldownSec }) : plan ? t("spike.trigger", { a: plan.move1mPct, b: plan.move3mPct }) : ""}
+            {snap && snap.gauge.cooldownSec > 0 ? t("spike.cooldown", { n: snap.gauge.cooldownSec }) : plan ? t("spike.trigger", { a: plan.move1mPct, b: plan.move3mPct, w1: span(t, plan.window1Sec ?? 60), w2: span(t, plan.window2Sec ?? 180) }) : ""}
           </span>
         </div>
-        <Gauge label={t("spike.g1m")} pct={snap?.gauge.r1Pct ?? null} threshold={plan?.move1mPct ?? 0.5} />
-        <Gauge label={t("spike.g3m")} pct={snap?.gauge.r3Pct ?? null} threshold={plan?.move3mPct ?? 0.8} />
+        <Gauge label={span(t, plan?.window1Sec ?? 60)} pct={snap?.gauge.r1Pct ?? null} threshold={plan?.move1mPct ?? 0.5} />
+        <Gauge label={span(t, plan?.window2Sec ?? 180)} pct={snap?.gauge.r3Pct ?? null} threshold={plan?.move3mPct ?? 0.8} />
       </section>
     </>
   );

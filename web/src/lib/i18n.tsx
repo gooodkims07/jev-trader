@@ -74,12 +74,12 @@ const en = {
   "spike.min": "{n} min",
   "spike.flat": "flat, waiting for a spike",
   "spike.distance": "DISTANCE TO A SPIKE",
-  "spike.g1m": "1m",
-  "spike.g3m": "3m",
+  "span.s": "{n}s",
+  "span.m": "{n}m",
   "unit.min": "min",
   "unit.s": "s",
   "spike.cooldown": "cooldown {n}s",
-  "spike.trigger": "trigger {a}% / 1m or {b}% / 3m",
+  "spike.trigger": "trigger {a}% / {w1} or {b}% / {w2}",
   "spike.vs": "JEV VS RULES",
   "spike.feesIncluded": "fees included",
   "spike.col.strategy": "strategy",
@@ -136,8 +136,10 @@ const en = {
   "settings.group.size": "Order size",
   "settings.group.risk": "Stops and take profits",
   "settings.group.mm": "Jev",
-  "field.spike.move1mPct": "Spike trigger, 1 minute",
-  "field.spike.move3mPct": "Spike trigger, 3 minutes",
+  "field.spike.window1Sec": "Short window",
+  "field.spike.move1mPct": "Short window move",
+  "field.spike.window2Sec": "Long window",
+  "field.spike.move3mPct": "Long window move",
   "field.spike.takeProfitRoePct": "Take profit",
   "field.spike.stopLossRoePct": "Stop loss",
   "field.spike.maxHoldMin": "Max hold",
@@ -230,12 +232,12 @@ const ko: Record<Key, string> = {
   "spike.min": "{n}분",
   "spike.flat": "포지션 없음, 급변 대기 중",
   "spike.distance": "급변까지 거리",
-  "spike.g1m": "1분",
-  "spike.g3m": "3분",
+  "span.s": "{n}초",
+  "span.m": "{n}분",
   "unit.min": "분",
   "unit.s": "초",
   "spike.cooldown": "대기 {n}초",
-  "spike.trigger": "기준 1분 {a}% / 3분 {b}%",
+  "spike.trigger": "기준 {w1} {a}% / {w2} {b}%",
   "spike.vs": "JEV와 규칙 비교",
   "spike.feesIncluded": "수수료 포함",
   "spike.col.strategy": "전략",
@@ -292,8 +294,10 @@ const ko: Record<Key, string> = {
   "settings.group.size": "주문 수량",
   "settings.group.risk": "손절과 익절",
   "settings.group.mm": "Jev",
-  "field.spike.move1mPct": "급변 기준, 1분",
-  "field.spike.move3mPct": "급변 기준, 3분",
+  "field.spike.window1Sec": "짧은 구간 길이",
+  "field.spike.move1mPct": "짧은 구간 변동 기준",
+  "field.spike.window2Sec": "긴 구간 길이",
+  "field.spike.move3mPct": "긴 구간 변동 기준",
   "field.spike.takeProfitRoePct": "익절",
   "field.spike.stopLossRoePct": "손절",
   "field.spike.maxHoldMin": "최대 보유",
@@ -353,3 +357,10 @@ export function LangProvider({ fallback, children }: { fallback: Lang; children:
 }
 
 export const useLang = () => useContext(Ctx);
+
+/** A window in seconds, or a row's label ("30s", "1m"), in the viewer's language: 30 -> "30초" / "30s". */
+export function span(t: T, v: number | string): string {
+  const sec = typeof v === "number" ? v : v.endsWith("m") ? Number(v.slice(0, -1)) * 60 : Number(v.replace(/s$/, ""));
+  if (!Number.isFinite(sec)) return String(v);
+  return sec % 60 === 0 ? t("span.m", { n: sec / 60 }) : t("span.s", { n: sec });
+}

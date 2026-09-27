@@ -87,9 +87,14 @@ export const config = {
    */
   strategy: (env("STRATEGY", "mm") as "mm" | "spike"),
   spike: {
-    /** A spike: the mid moved at least this % in 1 minute, or move3mPct in 3 minutes. */
+    /**
+     * A spike: the mid moved at least move1mPct over the short window (window1Sec, default 1 minute), or
+     * move3mPct over the long one (window2Sec, default 3 minutes). The names keep their first defaults.
+     */
     move1mPct: Number(env("SPIKE_1M_PCT", "0.5")),
     move3mPct: Number(env("SPIKE_3M_PCT", "0.8")),
+    window1Sec: Number(env("SPIKE_WINDOW1_SEC", "60")),
+    window2Sec: Number(env("SPIKE_WINDOW2_SEC", "180")),
     /** Exits as return on margin (ROE, %): the price levels are these divided by OKX_LEVERAGE. */
     takeProfitRoePct: Number(env("SPIKE_TP_ROE_PCT", "20")),
     stopLossRoePct: Number(env("SPIKE_SL_ROE_PCT", "30")),

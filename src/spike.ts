@@ -23,19 +23,25 @@ import type { Book, Fill, Quote, Side, Venue, VenueInfo } from "./venue";
 
 const round = (x: number, d: number) => Math.round(x * 10 ** d) / 10 ** d;
 
+/** 30 -> "30s", 60 -> "1m", 180 -> "3m": how a window is written in rows, logs and the dashboard. */
+export const spanLabel = (sec: number) => (sec % 60 === 0 ? `${sec / 60}m` : `${sec}s`);
+/** 30 -> "30 seconds", 60 -> "1 minute", 180 -> "3 minutes": for Jev's question. */
+const spanWords = (sec: number) => (sec % 60 === 0 ? (sec === 60 ? "1 minute" : `${sec / 60} minutes`) : `${sec} seconds`);
+
 export interface SpikeState {
   market: string;
   mid: number;
   spreadBps: number;
   /** The move that triggered this question. */
-  spike: { window: "1m" | "3m"; direction: "up" | "down"; movePct: number; fromPrice: number };
+  /** window: "30s", "1m", "5m"... the span the move was measured over. */
+  spike: { window: string; direction: "up" | "down"; movePct: number; fromPrice: number };
   returnsPct: { last1m: number; last3m: number; last5m: number };
   /** Mid every 10 s over the last 5 minutes, oldest first. */
   recentMids: string;
   bookImbalance: number;
   depth: { [band: string]: { bid: number; ask: number } };
   book: { bids: string[]; asks: string[] };
-  /** Taker prints over the last 3 minutes. cvdMon = taker buys minus taker sells, in the coin. */
+  /** Taker prints over the longer spike window. cvdMon = taker buys minus taker sells, in the coin. */
   trades: { count: number; buyMon: number; sellMon: number; cvdMon: number; vwap: number | null; lastSide: Side | null };
   recentTrades: string[];
   plan: { leverage: number; takeProfitPct: number; stopLossPct: number; takeProfitRoePct: number; stopLossRoePct: number; maxHoldMin: number; takerFeeBps: number };
@@ -54,9 +60,9 @@ export function spikeQuestions(v: VenueInfo) {
       type: "choice",
       instructions: {
         question: "The price just moved sharply (see `spike`). Go long now, go short now, or stay out?",
-        goal: `Trade short-lived spikes on the ${b}-USDT perpetual swap on ${v.label}. When the price moves at least ${config.spike.move1mPct}% in 1 minute or ${config.spike.move3mPct}% in 3 minutes, you decide. Long or short opens a position at market now, paying \`plan.takerFeeBps\` each way. It closes when the price moves \`plan.takeProfitPct\` in our favour or \`plan.stopLossPct\` against us, or after \`plan.maxHoldMin\` minutes. After an up spike, long follows the move and short fades it; after a down spike it is the other way round. The stop is further away than the take-profit, so a trade has to hit its take-profit first well over half the time to pay; stay out unless one side clearly has the better odds.`,
+        goal: `Trade short-lived spikes on the ${b}-USDT perpetual swap on ${v.label}. When the price moves at least ${config.spike.move1mPct}% in ${spanWords(config.spike.window1Sec)} or ${config.spike.move3mPct}% in ${spanWords(config.spike.window2Sec)}, you decide. Long or short opens a position at market now, paying \`plan.takerFeeBps\` each way. It closes when the price moves \`plan.takeProfitPct\` in our favour or \`plan.stopLossPct\` against us, or after \`plan.maxHoldMin\` minutes. After an up spike, long follows the move and short fades it; after a down spike it is the other way round. The stop is further away than the take-profit, so a trade has to hit its take-profit first well over half the time to pay; stay out unless one side clearly has the better odds.`,
         timing: "The order fills at market within a second. The position is then watched every second against the mid until an exit.",
-        inputs: `\`spike\` is the triggering move. \`returnsPct\` and \`recentMids\` show the path over the last 5 minutes. \`trades\` and \`recentTrades\` show taker flow over the last 3 minutes: heavy flow in the spike's direction that is dying out can mean the move is exhausted and will give some back; flow still building can mean it continues. \`book\`, \`depth\` and \`bookImbalance\` show resting liquidity; thin depth on one side means the price moves easily that way. \`fundingRatePct\` is per funding period; positive means longs pay shorts. Sizes and every field ending in \`Mon\` are in ${b}.`,
+        inputs: `\`spike\` is the triggering move. \`returnsPct\` and \`recentMids\` show the path over the last 5 minutes. \`trades\` and \`recentTrades\` show taker flow over the last ${spanWords(Math.max(config.spike.window1Sec, config.spike.window2Sec))}: heavy flow in the spike's direction that is dying out can mean the move is exhausted and will give some back; flow still building can mean it continues. \`book\`, \`depth\` and \`bookImbalance\` show resting liquidity; thin depth on one side means the price moves easily that way. \`fundingRatePct\` is per funding period; positive means longs pay shorts. Sizes and every field ending in \`Mon\` are in ${b}.`,
       },
       criteria: {
         buy: `Go long at market: from here the price is more likely to rise \`plan.takeProfitPct\` than to fall \`plan.stopLossPct\` within \`plan.maxHoldMin\` minutes.`,
@@ -106,12 +112,12 @@ interface Open { who: Who; side: Side; entry: number; size: number; openedAt: nu
 
 const LOG = "data/spike.jsonl";
 /** A row of data/spike.jsonl. */
-interface SpikeRow { type: "spike"; instId?: string; block: number; ts: number; window: "1m" | "3m"; direction: "up" | "down"; movePct: number; mid: number; asked: boolean; jev: { action: Action; probabilities: Record<Action, number>; latencyMs: number } | null }
+interface SpikeRow { type: "spike"; instId?: string; block: number; ts: number; window: string; direction: "up" | "down"; movePct: number; mid: number; asked: boolean; jev: { action: Action; probabilities: Record<Action, number>; latencyMs: number } | null }
 interface TradeRow { type: "trade"; instId?: string; who: Who; side: Side; spikeBlock: number; openedAt: number; closedAt: number; heldMin: number; entry: number; exit: number; reason: string; pnlPct: number; roePct: number; pnlUsd: number; ts?: number }
 
 /** What the dashboard's spike panels read from GET /spike. */
 export interface SpikeSnapshot {
-  plan: { move1mPct: number; move3mPct: number; takeProfitRoePct: number; stopLossRoePct: number; takeProfitPct: number; stopLossPct: number; leverage: number; maxHoldMin: number; size: number; base: string };
+  plan: { move1mPct: number; move3mPct: number; window1Sec: number; window2Sec: number; takeProfitRoePct: number; stopLossRoePct: number; takeProfitPct: number; stopLossPct: number; leverage: number; maxHoldMin: number; size: number; base: string };
   /** The mid's move now vs 1 and 3 minutes ago, in %, or null while history fills. */
   gauge: { r1Pct: number | null; r3Pct: number | null; cooldownSec: number };
   open: { who: Who; side: Side; entry: number; tp: number; sl: number; heldMin: number; unrealizedPct: number; unrealizedRoePct: number }[];
@@ -178,8 +184,8 @@ export class SpikeTrader {
       return { ts: x.ts ?? x.closedAt * 1000, jev: round(cum.jev, 5), fade: round(cum.fade, 5), follow: round(cum.follow, 5) };
     });
     return {
-      plan: { move1mPct: config.spike.move1mPct, move3mPct: config.spike.move3mPct, takeProfitRoePct: config.spike.takeProfitRoePct, stopLossRoePct: config.spike.stopLossRoePct, takeProfitPct: this.tpPct, stopLossPct: this.slPct, leverage: config.okx.leverage, maxHoldMin: config.spike.maxHoldMin, size: config.tradeSize, base: this.venue.info.base },
-      gauge: { r1Pct: r(60), r3Pct: r(180), cooldownSec: Math.max(0, this.cooldownUntil - now) },
+      plan: { move1mPct: config.spike.move1mPct, move3mPct: config.spike.move3mPct, window1Sec: config.spike.window1Sec, window2Sec: config.spike.window2Sec, takeProfitRoePct: config.spike.takeProfitRoePct, stopLossRoePct: config.spike.stopLossRoePct, takeProfitPct: this.tpPct, stopLossPct: this.slPct, leverage: config.okx.leverage, maxHoldMin: config.spike.maxHoldMin, size: config.tradeSize, base: this.venue.info.base },
+      gauge: { r1Pct: r(config.spike.window1Sec), r3Pct: r(config.spike.window2Sec), cooldownSec: Math.max(0, this.cooldownUntil - now) },
       open: [...this.open.values()].map((o) => {
         const dir = o.side === "buy" ? 1 : -1, u = mid ? dir * (mid / o.entry - 1) * 100 : 0;
         return { who: o.who, side: o.side, entry: o.entry, tp: o.tp, sl: o.sl, heldMin: round((now - o.openedAt) / 60, 1), unrealizedPct: round(u, 3), unrealizedRoePct: round(u * config.okx.leverage, 2) };
@@ -195,7 +201,7 @@ export class SpikeTrader {
 
   describe() {
     const s = config.spike;
-    return `spike · trigger ${s.move1mPct}% in 1m or ${s.move3mPct}% in 3m · exits ROE +${s.takeProfitRoePct}% / -${s.stopLossRoePct}% at ${config.okx.leverage}x = price +${this.tpPct}% / -${this.slPct}% · max ${s.maxHoldMin} min · shadows: fade, follow · log data/spike.jsonl`;
+    return `spike · trigger ${s.move1mPct}% in ${spanLabel(s.window1Sec)} or ${s.move3mPct}% in ${spanLabel(s.window2Sec)} · exits ROE +${s.takeProfitRoePct}% / -${s.stopLossRoePct}% at ${config.okx.leverage}x = price +${this.tpPct}% / -${this.slPct}% · max ${s.maxHoldMin} min · shadows: fade, follow · log data/spike.jsonl`;
   }
 
   async onBlock(block: number) {
@@ -208,7 +214,8 @@ export class SpikeTrader {
       this.lastMid = book.mid;
       this.lastBlock = block;
       this.hist.push({ b: block, mid: book.mid });
-      while (this.hist.length && this.hist[0]!.b < block - 360) this.hist.shift();
+      const keep = Math.max(config.spike.window1Sec, config.spike.window2Sec, 300) + 60;
+      while (this.hist.length && this.hist[0]!.b < block - keep) this.hist.shift();
       let quote: Quote | null = null, fill: Fill | null = null, decision: Decision | null = null, note = "";
 
       // Exits first, for Jev and the shadows.
@@ -260,13 +267,16 @@ export class SpikeTrader {
     for (const o of [...this.open.values()]) this.close(o, book, this.lastBlock, "switch");
   }
 
-  /** A move of at least move1mPct over 1 minute or move3mPct over 3 minutes, needing 3 minutes of history. */
+  /**
+   * A move of at least move1mPct over the short window or move3mPct over the long one, each needing that
+   * much history. The windows can change while running (settings); the history keeps enough for either.
+   */
   detect(book: Book): SpikeState["spike"] | null {
-    const m1 = this.midAgo(60), m3 = this.midAgo(180);
-    if (m1 === null || m3 === null) return null;
-    const r1 = (book.mid / m1 - 1) * 100, r3 = (book.mid / m3 - 1) * 100;
-    if (Math.abs(r1) >= config.spike.move1mPct) return { window: "1m", direction: r1 > 0 ? "up" : "down", movePct: round(r1, 3), fromPrice: m1 };
-    if (Math.abs(r3) >= config.spike.move3mPct) return { window: "3m", direction: r3 > 0 ? "up" : "down", movePct: round(r3, 3), fromPrice: m3 };
+    const { window1Sec: w1, window2Sec: w2 } = config.spike;
+    const m1 = this.midAgo(w1), m2 = this.midAgo(w2);
+    const r1 = m1 === null ? 0 : (book.mid / m1 - 1) * 100, r2 = m2 === null ? 0 : (book.mid / m2 - 1) * 100;
+    if (m1 !== null && Math.abs(r1) >= config.spike.move1mPct) return { window: spanLabel(w1), direction: r1 > 0 ? "up" : "down", movePct: round(r1, 3), fromPrice: m1 };
+    if (m2 !== null && Math.abs(r2) >= config.spike.move3mPct) return { window: spanLabel(w2), direction: r2 > 0 ? "up" : "down", movePct: round(r2, 3), fromPrice: m2 };
     return null;
   }
 
@@ -279,7 +289,7 @@ export class SpikeTrader {
     const lvl = (l: [number, number]) => `${l[0].toFixed(pd)} x ${round(l[1], sd)}`;
     const depth: SpikeState["depth"] = {};
     for (const [k, v] of Object.entries(book.depthBps)) depth[k + "bps"] = { bid: round(v.bid, sd), ask: round(v.ask, sd) };
-    const s = this.venue.trades.summary(180, this.lastBlock);
+    const s = this.venue.trades.summary(Math.max(config.spike.window1Sec, config.spike.window2Sec), this.lastBlock);
     return {
       market: this.venue.info.symbol, mid: book.mid, spreadBps: round(book.spreadBps, 2), spike,
       returnsPct: { last1m: ret(60), last3m: ret(180), last5m: ret(300) },

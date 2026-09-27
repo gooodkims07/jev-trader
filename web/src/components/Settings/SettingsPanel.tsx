@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useLang, type Key } from "@/lib/i18n";
+import { span, useLang, type Key } from "@/lib/i18n";
 import CoinPicker from "./CoinPicker";
 import styles from "./Settings.module.css";
 
@@ -125,7 +125,7 @@ export default function SettingsPanel({ apiUrl, onClose }: { apiUrl: string; onC
                         onChange={(e) => setDraft((d) => ({ ...d, [f.key]: e.target.value }))}
                       >
                         {f.options.map((o) => (
-                          <option key={o} value={String(o)}>{o >= 60_000 ? t("tick.min", { n: o / 60_000 }) : t("tick.s", { n: o / 1000 })}</option>
+                          <option key={o} value={String(o)}>{f.unit === "ms" ? (o >= 60_000 ? t("tick.min", { n: o / 60_000 }) : t("tick.s", { n: o / 1000 })) : span(t, o)}</option>
                         ))}
                       </select>
                     ) : (

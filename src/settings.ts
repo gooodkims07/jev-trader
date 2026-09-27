@@ -22,12 +22,17 @@ const FILE = "data/settings.json";
 type Group = "clock" | "spike" | "size" | "risk" | "mm";
 interface Def { key: string; group: Group; min: number; max: number; step: number; unit: string; get(): number; set(v: number): void; strategies: ("mm" | "spike")[]; options?: number[]; venues?: ("kuru" | "okx")[] }
 
+/** Spike windows offered (seconds): 30 s to 15 min. */
+export const WINDOW_OPTIONS = [30, 60, 120, 180, 300, 600, 900];
+
 /** Tick lengths offered for OKX (ms). */
 export const TICK_OPTIONS = [1000, 3000, 5000, 10_000, 15_000, 30_000, 60_000];
 
 const DEFS: Def[] = [
   { key: "okx.tickMs", group: "clock", min: 1000, max: 60_000, step: 1000, unit: "ms", get: () => config.okx.tickMs, set: (v) => { config.okx.tickMs = v; }, strategies: ["mm", "spike"], options: TICK_OPTIONS, venues: ["okx"] },
+  { key: "spike.window1Sec", group: "spike", min: 30, max: 900, step: 30, unit: "s", get: () => config.spike.window1Sec, set: (v) => { config.spike.window1Sec = v; }, strategies: ["spike"], options: WINDOW_OPTIONS },
   { key: "spike.move1mPct", group: "spike", min: 0.05, max: 10, step: 0.05, unit: "%", get: () => config.spike.move1mPct, set: (v) => { config.spike.move1mPct = v; }, strategies: ["spike"] },
+  { key: "spike.window2Sec", group: "spike", min: 30, max: 900, step: 30, unit: "s", get: () => config.spike.window2Sec, set: (v) => { config.spike.window2Sec = v; }, strategies: ["spike"], options: WINDOW_OPTIONS },
   { key: "spike.move3mPct", group: "spike", min: 0.05, max: 20, step: 0.05, unit: "%", get: () => config.spike.move3mPct, set: (v) => { config.spike.move3mPct = v; }, strategies: ["spike"] },
   { key: "spike.takeProfitRoePct", group: "spike", min: 1, max: 500, step: 1, unit: "% ROE", get: () => config.spike.takeProfitRoePct, set: (v) => { config.spike.takeProfitRoePct = v; }, strategies: ["spike"] },
   { key: "spike.stopLossRoePct", group: "spike", min: 1, max: 500, step: 1, unit: "% ROE", get: () => config.spike.stopLossRoePct, set: (v) => { config.spike.stopLossRoePct = v; }, strategies: ["spike"] },
@@ -114,6 +119,8 @@ export function settingsHandler(venue: Venue) {
       if (size <= 0) errors.tradeSize = "must be above 0";
       else { const why = venue.checkSize?.(size); if (why) errors.tradeSize = why; }
     }
+    const w1 = val("spike.window1Sec"), w2 = val("spike.window2Sec");
+    if (w1 !== undefined && w2 !== undefined && w1 >= w2) errors["spike.window2Sec"] = "must be longer than the short window";
     const cap = val("maxPosition");
     if (cap !== undefined && size !== undefined && cap < size) errors.maxPosition = "must be at least the order size";
     if (Object.keys(errors).length) return { status: 400, body: { error: "invalid", errors } };

@@ -17,12 +17,12 @@ export interface Meta { model: string; wallet: string | null; dryRun: boolean; m
 export type Who = "jev" | "fade" | "follow";
 export interface SpikeTrade { side: Side; reason: string; pnlPct: number; roePct: number; pnlUsd: number }
 export interface SpikeRow {
-  block: number; ts: number; window: "1m" | "3m"; direction: "up" | "down"; movePct: number; mid: number; asked: boolean;
+  block: number; ts: number; window: string; direction: "up" | "down"; movePct: number; mid: number; asked: boolean;
   jev: { action: Action; probabilities: { buy: number; sell: number; hold: number }; latencyMs: number } | null;
   trade: SpikeTrade | null; jevOpen: boolean;
 }
 export interface SpikeSnapshot {
-  plan: { move1mPct: number; move3mPct: number; takeProfitRoePct: number; stopLossRoePct: number; takeProfitPct: number; stopLossPct: number; leverage: number; maxHoldMin: number; size: number; base: string };
+  plan: { move1mPct: number; move3mPct: number; window1Sec?: number; window2Sec?: number; takeProfitRoePct: number; stopLossRoePct: number; takeProfitPct: number; stopLossPct: number; leverage: number; maxHoldMin: number; size: number; base: string };
   gauge: { r1Pct: number | null; r3Pct: number | null; cooldownSec: number };
   open: { who: Who; side: Side; entry: number; tp: number; sl: number; heldMin: number; unrealizedPct: number; unrealizedRoePct: number }[];
   stats: Record<Who, { trades: number; wins: number; avgPct: number; totalUsd: number; tp: number; sl: number; time: number }>;

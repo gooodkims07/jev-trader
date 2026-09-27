@@ -19,6 +19,8 @@ Object.assign(process.env, {
   OKX_LEVERAGE: "5",
   SPIKE_1M_PCT: "0.5",
   SPIKE_3M_PCT: "0.8",
+  SPIKE_WINDOW1_SEC: "60",
+  SPIKE_WINDOW2_SEC: "180",
   SPIKE_TP_ROE_PCT: "20",
   SPIKE_SL_ROE_PCT: "30",
   SPIKE_MAX_HOLD_MIN: "240",

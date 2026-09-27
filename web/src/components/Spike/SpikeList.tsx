@@ -1,7 +1,7 @@
 "use client";
 
 import type { SpikeRow, SpikeSnapshot } from "@/lib/types";
-import { useLang, type T } from "@/lib/i18n";
+import { span, useLang, type T } from "@/lib/i18n";
 import styles from "./Spike.module.css";
 
 const hhmm = (ts: number) => new Date(ts).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
@@ -44,7 +44,7 @@ export default function SpikeList({ snap }: { snap: SpikeSnapshot | null }) {
               <div key={s.block} className={styles.row}>
                 <span className={`${styles.mono} ${styles.time}`}>{hhmm(s.ts)}</span>
                 <span className={styles.mono} style={{ color: s.direction === "up" ? "var(--buy-ink)" : "var(--sell-ink)" }}>
-                  {s.movePct >= 0 ? "+" : ""}{s.movePct.toFixed(2)}% {s.window}
+                  {s.movePct >= 0 ? "+" : ""}{s.movePct.toFixed(2)}% {span(t, s.window)}
                 </span>
                 <span style={{ color: c.colour }}>{c.text}</span>
                 <span className={`${styles.mono} ${styles.right} ${o.cls}`}>{o.text}</span>

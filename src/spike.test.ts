@@ -104,3 +104,19 @@ test("5 s ticks: windows are time, not tick counts (blocks are seconds)", async 
   b += 5; await t.onBlock(b);
   expect(t.snapshot().gauge.cooldownSec).toBe(175);
 });
+
+test("windows are settings: a 30 s window catches a move the 1 m window would", async () => {
+  const saved = { w1: config.spike.window1Sec, w2: config.spike.window2Sec };
+  config.spike.window1Sec = 30; config.spike.window2Sec = 300;
+  try {
+    const v = venue(); const notes: string[] = [];
+    const t = new SpikeTrader(v, says("hold"), (_e, n) => { if (n) notes.push(n); });
+    let b = await warm(t, v, 40_000, 40, 2); // 40 s of history: enough for 30 s, not for 5 m
+    v.setMid(2 * 1.006); await t.onBlock(b++);
+    expect(notes.at(-1)).toContain("SPIKE up 0.60% in 30s");
+    expect(t.snapshot().plan).toMatchObject({ window1Sec: 30, window2Sec: 300 });
+    expect(t.snapshot().gauge.r3Pct).toBeNull(); // the 5 m window has no history yet
+  } finally {
+    config.spike.window1Sec = saved.w1; config.spike.window2Sec = saved.w2;
+  }
+});
