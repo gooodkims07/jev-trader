@@ -212,3 +212,28 @@ test("resetReference: moves already made stop counting; the next move is measure
   v.setMid(2.008 * 1.006); await t.onBlock(b++);   // +0.6% from the reference: a spike, at once
   expect(notes.at(-1)).toContain("SPIKE up 0.60% in 1m");
 });
+
+import { spikeQuestions } from "./spike";
+
+test("sides: long only drops the short answer from Jev's question, and no one opens a short", async () => {
+  const saved = config.spike.sides;
+  config.spike.sides = 1;
+  try {
+    const info = venue().info;
+    expect(Object.keys(spikeQuestions(info).direction.criteria)).toEqual(["buy", "hold"]);
+    const v = venue(); const notes: string[] = [];
+    const t = new SpikeTrader(v, says("sell"), (_e, n) => { if (n) notes.push(n); });
+    let b = await warm(t, v, 110_000, 200, 1.5);
+    v.setMid(1.5 * 1.006); await t.onBlock(b++);          // an up spike: fade would short, follow would long
+    expect(notes.at(-1)).toContain(": out");               // Jev's short is not allowed: stays out
+    const open = t.snapshot().open.map((o) => `${o.who}:${o.side}`);
+    expect(open).toEqual(["follow:buy"]);                  // the fade short is not allowed either
+    expect(t.snapshot().plan.sides).toBe("long");
+    config.spike.sides = 2;
+    expect(Object.keys(spikeQuestions(info).direction.criteria)).toEqual(["sell", "hold"]);
+    config.spike.sides = 0;
+    expect(Object.keys(spikeQuestions(info).direction.criteria)).toEqual(["buy", "sell", "hold"]);
+  } finally {
+    config.spike.sides = saved;
+  }
+});

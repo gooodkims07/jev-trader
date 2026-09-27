@@ -23,6 +23,11 @@ import type { Book, Fill, MarketExec, Quote, Side, Venue, VenueInfo } from "./ve
 
 const round = (x: number, d: number) => Math.round(x * 10 ** d) / 10 ** d;
 
+/** Sides spikes may open now: both, long only or short only (SPIKE_SIDES). */
+export function allowedSides(): Side[] {
+  return config.spike.sides === 1 ? ["buy"] : config.spike.sides === 2 ? ["sell"] : ["buy", "sell"];
+}
+
 /** What long / short / stay out mean while we already hold a position, as set now (SPIKE_MAX_ADDS, SPIKE_ALLOW_REVERSE). */
 function positionRules(): string {
   const { maxAdds, allowReverse } = config.spike;
@@ -75,11 +80,15 @@ export function spikeQuestions(v: VenueInfo) {
         timing: `The order fills at market within a second. The position is then watched every tick against the mid until an exit.${positionRules()}`,
         inputs: `\`spike\` is the triggering move. \`returnsPct\` and \`recentMids\` show the path over the last 5 minutes. \`trades\` and \`recentTrades\` show taker flow over the last ${spanWords(Math.max(config.spike.window1Sec, config.spike.window2Sec))}: heavy flow in the spike's direction that is dying out can mean the move is exhausted and will give some back; flow still building can mean it continues. \`book\`, \`depth\` and \`bookImbalance\` show resting liquidity; thin depth on one side means the price moves easily that way. \`fundingRatePct\` is per funding period; positive means longs pay shorts. Sizes and every field ending in \`Mon\` are in ${b}.`,
       },
-      criteria: {
-        buy: `Go long at market: from here the price is more likely to rise \`plan.takeProfitPct\` than to fall \`plan.stopLossPct\` within \`plan.maxHoldMin\` minutes.`,
-        sell: `Go short at market: from here the price is more likely to fall \`plan.takeProfitPct\` than to rise \`plan.stopLossPct\` within \`plan.maxHoldMin\` minutes.`,
-        hold: "Stay out: neither side clearly has the better odds of reaching its take-profit before its stop.",
-      } as Record<string, string>,
+      // Only the sides allowed now (SPIKE_SIDES) are answers: with long only, Jev picks long or stay out.
+      criteria: Object.fromEntries(
+        (allowedSides().map((sd) => [sd, sd === "buy"
+          ? `Go long at market: from here the price is more likely to rise \`plan.takeProfitPct\` than to fall \`plan.stopLossPct\` within \`plan.maxHoldMin\` minutes.`
+          : `Go short at market: from here the price is more likely to fall \`plan.takeProfitPct\` than to rise \`plan.stopLossPct\` within \`plan.maxHoldMin\` minutes.`]) as [string, string][])
+          .concat([["hold", allowedSides().length === 2
+            ? "Stay out: neither side clearly has the better odds of reaching its take-profit before its stop."
+            : `Stay out: ${allowedSides()[0] === "buy" ? "long" : "short"} is the only side allowed now, and it does not clearly have the better odds of reaching its take-profit before its stop.`]]),
+      ) as Record<string, string>,
     },
   } as const;
 }
@@ -136,7 +145,7 @@ interface TradeRow { type: "trade"; instId?: string; live?: boolean; who: Who; s
 
 /** What the dashboard's spike panels read from GET /spike. */
 export interface SpikeSnapshot {
-  plan: { maxAdds: number; allowReverse: boolean; move1mPct: number; move3mPct: number; window1Sec: number; window2Sec: number; takeProfitRoePct: number; stopLossRoePct: number; takeProfitPct: number; stopLossPct: number; leverage: number; maxHoldMin: number; size: number; base: string };
+  plan: { sides: "both" | "long" | "short"; maxAdds: number; allowReverse: boolean; move1mPct: number; move3mPct: number; window1Sec: number; window2Sec: number; takeProfitRoePct: number; stopLossRoePct: number; takeProfitPct: number; stopLossPct: number; leverage: number; maxHoldMin: number; size: number; base: string };
   /** The mid's move now vs 1 and 3 minutes ago, in %, or null while history fills. */
   gauge: { r1Pct: number | null; r3Pct: number | null; cooldownSec: number };
   open: { who: Who; side: Side; entry: number; size: number; adds: number; tp: number; sl: number; heldMin: number; unrealizedPct: number; unrealizedRoePct: number; unrealizedUsd: number }[];
@@ -210,7 +219,7 @@ export class SpikeTrader {
       return { ts: x.ts ?? x.closedAt * 1000, jev: round(cum.jev, 5), fade: round(cum.fade, 5), follow: round(cum.follow, 5) };
     });
     return {
-      plan: { maxAdds: config.spike.maxAdds, allowReverse: !!config.spike.allowReverse, move1mPct: config.spike.move1mPct, move3mPct: config.spike.move3mPct, window1Sec: config.spike.window1Sec, window2Sec: config.spike.window2Sec, takeProfitRoePct: config.spike.takeProfitRoePct, stopLossRoePct: config.spike.stopLossRoePct, takeProfitPct: this.tpPct, stopLossPct: this.slPct, leverage: config.okx.leverage, maxHoldMin: config.spike.maxHoldMin, size: config.tradeSize, base: this.venue.info.base },
+      plan: { sides: config.spike.sides === 1 ? "long" : config.spike.sides === 2 ? "short" : "both", maxAdds: config.spike.maxAdds, allowReverse: !!config.spike.allowReverse, move1mPct: config.spike.move1mPct, move3mPct: config.spike.move3mPct, window1Sec: config.spike.window1Sec, window2Sec: config.spike.window2Sec, takeProfitRoePct: config.spike.takeProfitRoePct, stopLossRoePct: config.spike.stopLossRoePct, takeProfitPct: this.tpPct, stopLossPct: this.slPct, leverage: config.okx.leverage, maxHoldMin: config.spike.maxHoldMin, size: config.tradeSize, base: this.venue.info.base },
       gauge: { r1Pct: r(config.spike.window1Sec), r3Pct: r(config.spike.window2Sec), cooldownSec: Math.max(0, this.cooldownUntil - now) },
       open: [...this.open.values()].map((o) => {
         const dir = o.side === "buy" ? 1 : -1, u = mid ? dir * (mid / o.entry - 1) * 100 : 0;
@@ -367,6 +376,7 @@ export class SpikeTrader {
   /** act() for Jev when live: the same decisions, sent to the exchange. */
   private async liveAct(want: Side | null, book: Book, block: number): Promise<{ effect: Effect; quote: Quote | null; fill: Fill | null; exitPct?: number }> {
     const o = this.open.get("jev");
+    if (want && !allowedSides().includes(want)) want = null;
     if (!want) return { effect: o ? "hold" : "out", quote: null, fill: null };
     const affordable = this.venue.canAfford(want, config.tradeSize, book);
     if (!o) {
@@ -523,6 +533,7 @@ export class SpikeTrader {
    */
   act(who: Who, want: Side | null, book: Book, block: number): { effect: Effect; quote: Quote | null; fill: Fill | null; exitPct?: number } {
     const o = this.open.get(who);
+    if (want && !allowedSides().includes(want)) want = null; // a side not allowed now counts as staying out
     if (!want) return { effect: o ? "hold" : "out", quote: null, fill: null };
     if (!o) return { effect: "open", ...this.openPos(who, want, book, block) };
     if (o.side === want) {

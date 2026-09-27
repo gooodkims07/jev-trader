@@ -37,6 +37,7 @@ const DEFS: Def[] = [
   { key: "spike.takeProfitRoePct", group: "spike", min: 1, max: 500, step: 1, unit: "% ROE", get: () => config.spike.takeProfitRoePct, set: (v) => { config.spike.takeProfitRoePct = v; }, strategies: ["spike"] },
   { key: "spike.stopLossRoePct", group: "spike", min: 1, max: 500, step: 1, unit: "% ROE", get: () => config.spike.stopLossRoePct, set: (v) => { config.spike.stopLossRoePct = v; }, strategies: ["spike"] },
   { key: "spike.maxHoldMin", group: "spike", min: 1, max: 1440, step: 1, unit: "min", get: () => config.spike.maxHoldMin, set: (v) => { config.spike.maxHoldMin = v; }, strategies: ["spike"] },
+  { key: "spike.sides", group: "spike", min: 0, max: 2, step: 1, unit: "sides", get: () => config.spike.sides, set: (v) => { config.spike.sides = v; }, strategies: ["spike"], options: [0, 1, 2] },
   { key: "spike.maxAdds", group: "spike", min: 0, max: 5, step: 1, unit: "count", get: () => config.spike.maxAdds, set: (v) => { config.spike.maxAdds = v; }, strategies: ["spike"], options: [0, 1, 2, 3, 4, 5] },
   { key: "spike.allowReverse", group: "spike", min: 0, max: 1, step: 1, unit: "bool", get: () => config.spike.allowReverse, set: (v) => { config.spike.allowReverse = v; }, strategies: ["spike"], options: [0, 1] },
   { key: "spike.cooldownSec", group: "spike", min: 0, max: 3600, step: 10, unit: "s", get: () => config.spike.cooldownSec, set: (v) => { config.spike.cooldownSec = v; }, strategies: ["spike"] },

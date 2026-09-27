@@ -24,7 +24,7 @@ export interface SpikeRow {
   effect?: "open" | "add" | "reverse" | "hold" | "out" | "not-asked";
 }
 export interface SpikeSnapshot {
-  plan: { move1mPct: number; move3mPct: number; window1Sec?: number; window2Sec?: number; takeProfitRoePct: number; stopLossRoePct: number; takeProfitPct: number; stopLossPct: number; leverage: number; maxHoldMin: number; size: number; base: string };
+  plan: { sides?: "both" | "long" | "short"; move1mPct: number; move3mPct: number; window1Sec?: number; window2Sec?: number; takeProfitRoePct: number; stopLossRoePct: number; takeProfitPct: number; stopLossPct: number; leverage: number; maxHoldMin: number; size: number; base: string };
   gauge: { r1Pct: number | null; r3Pct: number | null; cooldownSec: number };
   open: { who: Who; side: Side; entry: number; size?: number; adds?: number; tp: number; sl: number; heldMin: number; unrealizedPct: number; unrealizedRoePct: number; unrealizedUsd?: number }[];
   stats: Record<Who, { trades: number; wins: number; avgPct: number; totalUsd: number; tp: number; sl: number; time: number }>;

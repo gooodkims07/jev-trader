@@ -56,6 +56,7 @@ export default function SpikeStatus({ snap, apiUrl }: { snap: SpikeSnapshot | nu
           {plan ? (
             <span className={styles.labelNote}>
               {t("spike.exits", { tp: plan.takeProfitRoePct, sl: plan.stopLossRoePct, lev: plan.leverage })}
+              {plan.sides && plan.sides !== "both" ? `, ${t(plan.sides === "long" ? "sides.1" : "sides.2")}` : ""}
             </span>
           ) : null}
         </div>

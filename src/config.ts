@@ -99,6 +99,8 @@ export const config = {
     takeProfitRoePct: Number(env("SPIKE_TP_ROE_PCT", "20")),
     stopLossRoePct: Number(env("SPIKE_SL_ROE_PCT", "30")),
     maxHoldMin: Number(env("SPIKE_MAX_HOLD_MIN", "240")),
+    /** Which positions spikes may open: 0 both, 1 long only, 2 short only (SPIKE_SIDES=both|long|short). */
+    sides: ({ both: 0, long: 1, short: 2 } as Record<string, number>)[env("SPIKE_SIDES", "both")!] ?? 0,
     /** While in a position, a new spike on the same side adds another order, up to this many times (0 = never). */
     maxAdds: Number(env("SPIKE_MAX_ADDS", "0")),
     /** While in a position, a new spike on the other side closes it and opens the other way (1) or is ignored (0). */
