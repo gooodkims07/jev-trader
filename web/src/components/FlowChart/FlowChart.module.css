@@ -246,3 +246,48 @@
     opacity: 0;
   }
 }
+
+/* zoom controls, bottom left of the plot (OKX only) */
+.zoom {
+  position: absolute;
+  left: 14px;
+  bottom: 80px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid var(--border);
+  font: 500 11px var(--font-sans), Inter, system-ui, sans-serif;
+  color: var(--muted);
+  z-index: 2;
+}
+
+.zoom span {
+  margin: 0 2px 0 4px;
+}
+
+.zoom button {
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--border-2);
+  background: var(--bg);
+  color: var(--ink-2);
+  font: 600 13px var(--font-mono), monospace;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.zoom button:hover {
+  border-color: var(--muted-2);
+}
+
+.zoom .zoomReset {
+  width: auto;
+  padding: 0 8px;
+  border-radius: 999px;
+  font: 500 11px var(--font-sans), Inter, system-ui, sans-serif;
+}

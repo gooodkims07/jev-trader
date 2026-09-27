@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { BlockEvent } from "@/lib/types";
 import { fmtConf, fmtMon, fmtPrice, fmtSigned, fmtSignedMon } from "@/lib/format";
 import { useVenue } from "@/lib/venue";
@@ -43,6 +43,33 @@ export default function FlowChart({
   const [hover, setHover] = useState<number | null>(null);
   const gid = useId().replace(/[^a-zA-Z0-9]/g, "");
 
+  // Zoom (OKX only; the Kuru demo stays fixed): x scales the step per point (how much time shows), y narrows
+  // or widens the price band. Wheel zooms x, Shift+wheel zooms y; the buttons do the same. Kept per browser.
+  const zoomable = venue.name !== "kuru";
+  const [zoom, setZoom] = useState({ x: 1, y: 1 });
+  useEffect(() => {
+    try { const z = JSON.parse(localStorage.getItem("jev.chartZoom") ?? "null"); if (z && z.x > 0 && z.y > 0) setZoom(z); } catch { /* none saved */ }
+  }, []);
+  const applyZoom = useCallback((axis: "x" | "y", factor: number | null) => {
+    setZoom((z) => {
+      const next = factor === null ? { x: 1, y: 1 } : { ...z, [axis]: Math.min(axis === "x" ? 6 : 8, Math.max(axis === "x" ? 0.25 : 0.5, z[axis] * factor)) };
+      try { localStorage.setItem("jev.chartZoom", JSON.stringify(next)); } catch { /* not kept */ }
+      return next;
+    });
+  }, []);
+  useEffect(() => {
+    const el = panelRef.current;
+    if (!el || !zoomable) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      applyZoom(e.shiftKey ? "y" : "x", e.deltaY < 0 ? 1.15 : 1 / 1.15);
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [zoomable, applyZoom]);
+  const step = STEP * (zoomable ? zoom.x : 1);
+  const yz = zoomable ? zoom.y : 1;
+
   useEffect(() => {
     const el = panelRef.current;
     if (!el) return;
@@ -64,7 +91,7 @@ export default function FlowChart({
     const plotH = h - PAD_TOP - PAD_BOTTOM;
     if (w < 160 || plotH < 60) return null;
 
-    const n = Math.max(2, Math.ceil((w - ANCHOR_GAP) / STEP) + 2);
+    const n = Math.max(2, Math.ceil((w - ANCHOR_GAP) / step) + 2);
     let series = events.slice(-n);
     const tail = series[series.length - 1];
     if (latest && (!tail || latest.block > tail.block)) series = [...series, latest].slice(-n);
@@ -78,7 +105,7 @@ export default function FlowChart({
     // typical gap between recent points, so one step is STEP px whatever the tick (and after it changes).
     const gaps = series.slice(-30).map((e, i, a) => (i ? e.block - a[i - 1].block : 0)).filter((g) => g > 0).sort((a, b) => a - b);
     const span = gaps.length ? gaps[Math.floor(gaps.length / 2)] : 1;
-    const fx = (b: number) => ((b - origin) * STEP) / span;
+    const fx = (b: number) => ((b - origin) * step) / span;
 
     // --- value scale: window min/max, floored to 0.20% of price, eased 10%/block
     let lo = Infinity;
@@ -116,6 +143,12 @@ export default function FlowChart({
       }
     }
     scaleRef.current = { lo, hi, block: last.block };
+    // Vertical zoom around the middle of the (eased) band; the easing itself stays on the unzoomed band.
+    if (yz !== 1) {
+      const c = (lo + hi) / 2, half = (hi - lo) / 2 / yz;
+      lo = c - half;
+      hi = c + half;
+    }
 
     const range = hi - lo || 1;
     const fy = (p: number) => PAD_TOP + (1 - (p - lo) / range) * plotH;
@@ -173,9 +206,11 @@ export default function FlowChart({
       last,
       base,
       shift: w - ANCHOR_GAP - fx(last.block),
-      endY: fy(last.mid),
+      endY: Math.min(Math.max(fy(last.mid), PAD_TOP), base),
+      plotTop: PAD_TOP,
+      plotH,
     };
-  }, [events, latest, w, h, venue]);
+  }, [events, latest, w, h, venue, step, yz]);
 
   const hv = useMemo(() => {
     if (!model || hover === null) return null;
@@ -241,7 +276,7 @@ export default function FlowChart({
           if (ev.pointerType !== "mouse" || !model || originRef.current === null) return;
           const r = ev.currentTarget.getBoundingClientRect();
           const x = ev.clientX - r.left - model.shift;
-          let best: number | null = null, dist = STEP;
+          let best: number | null = null, dist = step;
           for (const b of model.byBlock.keys()) { const d = Math.abs(model.fx(b) - x); if (d <= dist) { dist = d; best = b; } }
           setHover(best);
         }}
@@ -264,8 +299,14 @@ export default function FlowChart({
               ))}
 
               <g className={styles.slide} style={{ transform: `translateX(${model.shift.toFixed(1)}px)` }}>
+                {/* clipped to the plot so a zoomed-in line does not run into the overlays */}
+                <clipPath id={`c${gid}`}>
+                  <rect x={-model.shift} y={model.plotTop - 14} width={w} height={model.plotH + 28} />
+                </clipPath>
+                <g clipPath={`url(#c${gid})`}>
                 <path d={model.area} fill={`url(#g${gid})`} />
                 <path className={styles.line} d={model.line} />
+                </g>
                 {model.beads.map((b) => (
                   <circle
                     key={b.key}
@@ -359,6 +400,18 @@ export default function FlowChart({
             </svg>
 
             <div className={styles.fade} />
+
+            {zoomable ? (
+              <div className={styles.zoom} onPointerMove={(e) => e.stopPropagation()}>
+                <span>{t("zoom.x")}</span>
+                <button type="button" onClick={() => applyZoom("x", 1 / 1.25)} aria-label="zoom out time">-</button>
+                <button type="button" onClick={() => applyZoom("x", 1.25)} aria-label="zoom in time">+</button>
+                <span>{t("zoom.y")}</span>
+                <button type="button" onClick={() => applyZoom("y", 1 / 1.25)} aria-label="zoom out price">-</button>
+                <button type="button" onClick={() => applyZoom("y", 1.25)} aria-label="zoom in price">+</button>
+                {zoom.x !== 1 || zoom.y !== 1 ? <button type="button" className={styles.zoomReset} onClick={() => applyZoom("x", null)}>{t("zoom.reset")}</button> : null}
+              </div>
+            ) : null}
 
             <div className={styles.tl}>
               <div className={styles.price} key={shown.mid}>
