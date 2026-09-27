@@ -12,7 +12,7 @@
  *
  * Block events keep the Trader's shape, so the dashboard and the SSE stream work unchanged.
  */
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { experimental_evaluate } from "ai";
 import { typeSafeAi } from "@ai-sdk/typesafe-ai";
 import { config } from "./config";
@@ -104,6 +104,24 @@ export const createSpikeModel = (v: VenueInfo): SpikeModel => (config.model === 
 type Who = "jev" | "fade" | "follow";
 interface Open { who: Who; side: Side; entry: number; size: number; openedAt: number; spikeBlock: number; tp: number; sl: number }
 
+const LOG = "data/spike.jsonl";
+/** A row of data/spike.jsonl. */
+interface SpikeRow { type: "spike"; block: number; ts: number; window: "1m" | "3m"; direction: "up" | "down"; movePct: number; mid: number; asked: boolean; jev: { action: Action; probabilities: Record<Action, number>; latencyMs: number } | null }
+interface TradeRow { type: "trade"; who: Who; side: Side; spikeBlock: number; openedAt: number; closedAt: number; heldMin: number; entry: number; exit: number; reason: string; pnlPct: number; roePct: number; pnlUsd: number; ts?: number }
+
+/** What the dashboard's spike panels read from GET /spike. */
+export interface SpikeSnapshot {
+  plan: { move1mPct: number; move3mPct: number; takeProfitRoePct: number; stopLossRoePct: number; takeProfitPct: number; stopLossPct: number; leverage: number; maxHoldMin: number; size: number; base: string };
+  /** The mid's move now vs 1 and 3 minutes ago, in %, or null while history fills. */
+  gauge: { r1Pct: number | null; r3Pct: number | null; cooldownSec: number };
+  open: { who: Who; side: Side; entry: number; tp: number; sl: number; heldMin: number; unrealizedPct: number; unrealizedRoePct: number }[];
+  stats: Record<Who, { trades: number; wins: number; avgPct: number; totalUsd: number; tp: number; sl: number; time: number }>;
+  /** Newest first; `trade` is Jev's closed trade from that spike, if any. */
+  spikes: (SpikeRow & { trade: Pick<TradeRow, "side" | "reason" | "pnlPct" | "roePct" | "pnlUsd"> | null; jevOpen: boolean })[];
+  /** Cumulative USDT per strategy after each closed trade, oldest first. */
+  curve: { ts: number; jev: number; fade: number; follow: number }[];
+}
+
 export class SpikeTrader {
   readonly history: BlockEvent[] = [];
   onHalt: (reason: string) => void = () => {};
@@ -114,6 +132,11 @@ export class SpikeTrader {
   private realized = 0; // Jev's closed trades, quote currency, fees included
   private feesUsd = 0;
   private closed = { jev: 0, fade: 0, follow: 0 };
+  /** Everything in data/spike.jsonl, this run and earlier ones, for the dashboard. */
+  private spikeRows: SpikeRow[] = [];
+  private tradeRows: TradeRow[] = [];
+  private lastMid = 0;
+  private lastBlock = 0;
   private totals: Totals = { blocks: 0, decisions: 0, quotes: 0, fills: 0, reverted: 0, lateBlocks: 0, skips: 0, jevUsd: 0, gasMon: 0, gasUsd: 0, feesUsd: 0, realizedUsd: 0, pnlUsd: 0, pnlMon: 0, pnlPct: 0 };
   private readonly tick1m: number;
   private readonly tpPct = config.spike.takeProfitRoePct / config.okx.leverage;
@@ -128,6 +151,44 @@ export class SpikeTrader {
     if (venue.live) throw new Error("STRATEGY=spike is dry run only for now: set DRY_RUN=true");
     mkdirSync("data", { recursive: true });
     this.tick1m = TICKS_1M(venue.info.blockMs);
+    if (existsSync(LOG)) for (const line of readFileSync(LOG, "utf8").split("\n")) {
+      if (!line.trim()) continue;
+      try { const r = JSON.parse(line); if (r.type === "spike") this.spikeRows.push(r); else if (r.type === "trade") this.tradeRows.push(r); } catch {}
+    }
+  }
+
+  /** For GET /spike: plan, how close the market is to a spike, open positions, and Jev vs the rules. */
+  snapshot(): SpikeSnapshot {
+    const m = this.mids, n = m.length, t = this.tick1m, mid = this.lastMid;
+    const r = (k: number) => (n > k && mid ? round((mid / m[n - 1 - k]! - 1) * 100, 3) : null);
+    const ms = this.venue.info.blockMs, now = this.lastBlock; // blocks are ticks of the clock
+    const stats = {} as SpikeSnapshot["stats"];
+    for (const who of ["jev", "fade", "follow"] as Who[]) {
+      const ts = this.tradeRows.filter((x) => x.who === who);
+      const by = (reason: string) => ts.filter((x) => x.reason === reason).length;
+      stats[who] = { trades: ts.length, wins: ts.filter((x) => x.pnlPct > 0).length, avgPct: ts.length ? round(ts.reduce((a, x) => a + x.pnlPct, 0) / ts.length, 4) : 0, totalUsd: round(ts.reduce((a, x) => a + x.pnlUsd, 0), 5), tp: by("take-profit"), sl: by("stop-loss"), time: by("time") };
+    }
+    const jevBySpike = new Map(this.tradeRows.filter((x) => x.who === "jev").map((x) => [x.spikeBlock, x]));
+    const jevOpen = this.open.get("jev");
+    const cum = { jev: 0, fade: 0, follow: 0 };
+    const curve = [...this.tradeRows].sort((a, b) => a.closedAt - b.closedAt).map((x) => {
+      cum[x.who] += x.pnlUsd;
+      return { ts: x.ts ?? x.closedAt * ms, jev: round(cum.jev, 5), fade: round(cum.fade, 5), follow: round(cum.follow, 5) };
+    });
+    return {
+      plan: { move1mPct: config.spike.move1mPct, move3mPct: config.spike.move3mPct, takeProfitRoePct: config.spike.takeProfitRoePct, stopLossRoePct: config.spike.stopLossRoePct, takeProfitPct: this.tpPct, stopLossPct: this.slPct, leverage: config.okx.leverage, maxHoldMin: config.spike.maxHoldMin, size: config.tradeSize, base: this.venue.info.base },
+      gauge: { r1Pct: r(t), r3Pct: r(3 * t), cooldownSec: Math.max(0, Math.round(((this.cooldownUntil - now) * ms) / 1000)) },
+      open: [...this.open.values()].map((o) => {
+        const dir = o.side === "buy" ? 1 : -1, u = mid ? dir * (mid / o.entry - 1) * 100 : 0;
+        return { who: o.who, side: o.side, entry: o.entry, tp: o.tp, sl: o.sl, heldMin: round(((now - o.openedAt) * ms) / 60_000, 1), unrealizedPct: round(u, 3), unrealizedRoePct: round(u * config.okx.leverage, 2) };
+      }),
+      stats,
+      spikes: this.spikeRows.slice(-50).reverse().map((s) => {
+        const tr = jevBySpike.get(s.block);
+        return { ...s, trade: tr ? { side: tr.side, reason: tr.reason, pnlPct: tr.pnlPct, roePct: tr.roePct, pnlUsd: tr.pnlUsd } : null, jevOpen: !!jevOpen && jevOpen.spikeBlock === s.block };
+      }),
+      curve,
+    };
   }
 
   describe() {
@@ -142,6 +203,8 @@ export class SpikeTrader {
     this.busy = true;
     try {
       const book = await this.venue.readBook();
+      this.lastMid = book.mid;
+      this.lastBlock = block;
       this.mids.push(book.mid);
       if (this.mids.length > this.tick1m * 6) this.mids.shift();
       let quote: Quote | null = null, fill: Fill | null = null, decision: Decision | null = null, note = "";
@@ -168,7 +231,9 @@ export class SpikeTrader {
           else ({ quote, fill } = this.openPos("jev", decision.action, book, block));
           note = `SPIKE ${spike.direction} ${spike.movePct.toFixed(2)}% in ${spike.window} -> ${decision.action === "hold" ? "stay out" : decision.action === followSide ? `${decision.action} (follow)` : `${decision.action} (fade)`}`;
         } else note = `SPIKE ${spike.direction} ${spike.movePct.toFixed(2)}% in ${spike.window} (in a position: not asked)`;
-        this.log({ type: "spike", block, ts: Date.now(), ...spike, mid: book.mid, asked: !!decision, jev: decision && { action: decision.action, probabilities: decision.probabilities, latencyMs: Math.round(decision.latencyMs) } });
+        const row: SpikeRow = { type: "spike", block, ts: Date.now(), window: spike.window, direction: spike.direction, movePct: spike.movePct, mid: book.mid, asked: !!decision, jev: decision && { action: decision.action, probabilities: decision.probabilities, latencyMs: Math.round(decision.latencyMs) } };
+        this.spikeRows.push(row);
+        this.log(row);
       }
       this.emit(block, book, decision, quote, fill, note);
     } catch (e) {
@@ -242,7 +307,9 @@ export class SpikeTrader {
     const pnlUsd = dir * (exit - o.entry) * o.size - fees;
     const pnlPct = (pnlUsd / (o.entry * o.size)) * 100; // on notional, fees included
     this.closed[o.who]++;
-    this.log({ type: "trade", who: o.who, side: o.side, spikeBlock: o.spikeBlock, openedAt: o.openedAt, closedAt: block, heldMin: round(((block - o.openedAt) * this.venue.info.blockMs) / 60_000, 1), entry: o.entry, exit, reason, pnlPct: round(pnlPct, 4), roePct: round(pnlPct * config.okx.leverage, 2), pnlUsd: round(pnlUsd, 5) });
+    const row: TradeRow = { type: "trade", who: o.who, side: o.side, spikeBlock: o.spikeBlock, openedAt: o.openedAt, closedAt: block, heldMin: round(((block - o.openedAt) * this.venue.info.blockMs) / 60_000, 1), entry: o.entry, exit, reason, pnlPct: round(pnlPct, 4), roePct: round(pnlPct * config.okx.leverage, 2), pnlUsd: round(pnlUsd, 5), ts: Date.now() };
+    this.tradeRows.push(row);
+    this.log(row);
     if (o.who !== "jev") return { quote: null, fill: null, pnlPct };
     const exitFee = config.spike.takerFeeRate * exit * o.size;
     this.feesUsd += exitFee;
@@ -255,7 +322,7 @@ export class SpikeTrader {
   }
 
   private log(row: object) {
-    appendFileSync("data/spike.jsonl", JSON.stringify(row) + "\n");
+    appendFileSync(LOG, JSON.stringify(row) + "\n");
   }
 
   private emit(block: number, book: Book, decision: Decision | null, quote: Quote | null, fill: Fill | null, note: string) {

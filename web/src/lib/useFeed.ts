@@ -184,6 +184,7 @@ function parseMeta(raw: Record<string, unknown> | null): Meta | null {
     market: typeof raw.market === "string" ? raw.market : "MON/USDC",
     startedAt: typeof raw.startedAt === "number" ? raw.startedAt : Date.now(),
     venue: parseVenue(raw.venue),
+    strategy: raw.strategy === "spike" ? "spike" : "mm",
   };
 }
 

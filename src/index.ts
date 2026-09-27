@@ -17,7 +17,7 @@ const px = (p: number) => p.toFixed(info.priceDecimals);
 const pxMid = (p: number) => (info.name === "kuru" ? px(p) : p.toFixed(info.priceDecimals + 1).replace(/0$/, "").replace(/\.$/, ""));
 
 const server = startServer(
-  { model: model.name, wallet: venue.account, dryRun: !venue.live, market: info.market, venue: info, startedAt: Date.now() },
+  { model: model.name, wallet: venue.account, dryRun: !venue.live, market: info.market, venue: info, startedAt: Date.now(), strategy: "mm" },
   () => trader.history,
 );
 const trader = new Trader(

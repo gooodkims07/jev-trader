@@ -9,8 +9,9 @@ export async function runSpike(venue: Venue) {
   const model = createSpikeModel(info);
   const px = (p: number) => p.toFixed(info.priceDecimals);
   const server = startServer(
-    { model: model.name, wallet: venue.account, dryRun: !venue.live, market: info.market, venue: info, startedAt: Date.now() },
+    { model: model.name, wallet: venue.account, dryRun: !venue.live, market: info.market, venue: info, startedAt: Date.now(), strategy: "spike" },
     () => trader.history,
+    { "/spike": () => trader.snapshot() },
   );
   let lastBeat = 0;
   const trader = new SpikeTrader(venue, model, (e, note) => {

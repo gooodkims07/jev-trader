@@ -1,0 +1,236 @@
+/* Spike strategy panels. Same tokens and type as the decision panel; no motion beyond width transitions. */
+
+.section {
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.label {
+  font-family: var(--font-sans), Inter, system-ui, sans-serif;
+  font-weight: 500;
+  font-size: 11px;
+  line-height: 1.2;
+  letter-spacing: 0.1em;
+  color: var(--muted-2);
+  margin-bottom: 10px;
+  display: flex;
+  justify-content: space-between;
+}
+
+.labelNote {
+  letter-spacing: 0;
+  font-family: var(--font-mono), "Geist Mono", ui-monospace, monospace;
+}
+
+.mono {
+  font-family: var(--font-mono), "Geist Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- position card ---- */
+
+.posHead {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.posWord {
+  font-family: var(--font-sans), Inter, system-ui, sans-serif;
+  font-weight: 600;
+  font-size: 24px;
+  line-height: 1.1;
+}
+
+.posRoe {
+  font-family: var(--font-mono), "Geist Mono", ui-monospace, monospace;
+  font-weight: 500;
+  font-size: 18px;
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px 10px;
+  font-size: 12px;
+}
+
+.k {
+  color: var(--muted-2);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+}
+
+.v {
+  color: var(--ink-2);
+  font-family: var(--font-mono), "Geist Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.flat {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* ---- gauge ---- */
+
+.gaugeRow {
+  display: grid;
+  grid-template-columns: 34px 1fr 62px;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.track {
+  position: relative;
+  height: 8px;
+  background: var(--track);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+/* the centre line: 0%. bars grow left (down) or right (up) from it */
+.track::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border-2);
+}
+
+.fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  transition: width 0.4s, left 0.4s;
+}
+
+.right {
+  text-align: right;
+}
+
+/* ---- comparison table ---- */
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.table th {
+  text-align: right;
+  font-weight: 500;
+  font-size: 10.5px;
+  color: var(--muted-2);
+  padding: 0 0 6px;
+}
+
+.table th:first-child,
+.table td:first-child {
+  text-align: left;
+}
+
+.table td {
+  text-align: right;
+  padding: 4px 0;
+  border-top: 1px solid var(--border);
+  font-family: var(--font-mono), "Geist Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-2);
+}
+
+.who {
+  font-family: var(--font-sans), Inter, system-ui, sans-serif !important;
+  font-weight: 600;
+}
+
+.swatch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  margin-right: 6px;
+}
+
+.pos {
+  color: var(--pnl-pos) !important;
+}
+
+.neg {
+  color: var(--pnl-neg) !important;
+}
+
+.note {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+/* ---- spike list ---- */
+
+.list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 18px 12px;
+}
+
+.listLabel {
+  padding: 16px 18px 8px;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 44px 58px 1fr 96px;
+  gap: 8px;
+  align-items: baseline;
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.time {
+  color: var(--muted-2);
+}
+
+.dim {
+  color: var(--muted-2);
+}
+
+.empty {
+  padding: 8px 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* ---- P&L curve (left column, under the price chart) ---- */
+
+.curve {
+  flex: none;
+  height: 150px;
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+}
+
+.curveSvg {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+}
+
+.legend {
+  display: flex;
+  gap: 14px;
+  font-size: 11px;
+  color: var(--muted);
+}

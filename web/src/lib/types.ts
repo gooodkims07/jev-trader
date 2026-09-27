@@ -11,6 +11,23 @@ export interface BlockEvent { block: number; ts: number; mid: number; bestBid: n
 /** Which exchange the server trades on. Money fields named ...Usd are in `quoteCcy`; size fields named ...Mon are in `base`. */
 export interface VenueInfo { name: "kuru" | "okx"; label: string; market: string; symbol: string; base: string; quoteCcy: string; priceDecimals: number; sizeDecimals: number; clock: "block" | "tick"; txUrl: string | null }
 /** `wallet` is the Kuru wallet address, or an OKX account label. `venue` is absent on older servers (Kuru). */
-export interface Meta { model: string; wallet: string | null; dryRun: boolean; market: string; venue?: VenueInfo; startedAt: number }
+export interface Meta { model: string; wallet: string | null; dryRun: boolean; market: string; venue?: VenueInfo; startedAt: number; strategy?: "mm" | "spike" }
+
+/** GET /spike (STRATEGY=spike). See src/spike.ts SpikeSnapshot. */
+export type Who = "jev" | "fade" | "follow";
+export interface SpikeTrade { side: Side; reason: string; pnlPct: number; roePct: number; pnlUsd: number }
+export interface SpikeRow {
+  block: number; ts: number; window: "1m" | "3m"; direction: "up" | "down"; movePct: number; mid: number; asked: boolean;
+  jev: { action: Action; probabilities: { buy: number; sell: number; hold: number }; latencyMs: number } | null;
+  trade: SpikeTrade | null; jevOpen: boolean;
+}
+export interface SpikeSnapshot {
+  plan: { move1mPct: number; move3mPct: number; takeProfitRoePct: number; stopLossRoePct: number; takeProfitPct: number; stopLossPct: number; leverage: number; maxHoldMin: number; size: number; base: string };
+  gauge: { r1Pct: number | null; r3Pct: number | null; cooldownSec: number };
+  open: { who: Who; side: Side; entry: number; tp: number; sl: number; heldMin: number; unrealizedPct: number; unrealizedRoePct: number }[];
+  stats: Record<Who, { trades: number; wins: number; avgPct: number; totalUsd: number; tp: number; sl: number; time: number }>;
+  spikes: SpikeRow[];
+  curve: { ts: number; jev: number; fade: number; follow: number }[];
+}
 export type ConnectionState = "connecting" | "live" | "reconnecting";
 export interface FeedState { meta: Meta | null; events: BlockEvent[]; latest: BlockEvent | null; connection: ConnectionState; avgLatencyMs: number }

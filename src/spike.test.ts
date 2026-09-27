@@ -75,3 +75,18 @@ test("stay out: no position for Jev, the shadows still trade; the time limit clo
     config.spike.maxHoldMin = saved;
   }
 });
+
+test("snapshot: plan, gauge, open positions, Jev vs rules, and the spike list for the dashboard", async () => {
+  const v = venue();
+  const t = new SpikeTrader(v, says("buy"), () => {});
+  let b = await warm(t, v, 20_000, 200, 1);
+  v.setMid(0.994); await t.onBlock(b++); // -0.6%: Jev buys (fades the drop)
+  const s = t.snapshot();
+  expect(s.plan).toMatchObject({ takeProfitPct: 4, stopLossPct: 6, leverage: 5, maxHoldMin: 240, base: "XRP" });
+  expect(s.gauge.r1Pct).toBeCloseTo(-0.6, 3);
+  expect(s.gauge.cooldownSec).toBeGreaterThan(0);
+  expect(s.open.map((o) => `${o.who}:${o.side}`).sort()).toEqual(["fade:buy", "follow:sell", "jev:buy"]);
+  expect(s.spikes[0]).toMatchObject({ block: b - 1, direction: "down", jevOpen: true, trade: null });
+  expect(Object.keys(s.stats).sort()).toEqual(["fade", "follow", "jev"]);
+  expect(Array.isArray(s.curve)).toBe(true);
+});

@@ -186,8 +186,10 @@ export default function FlowChart({
   const d = shown?.decision ?? null;
   const late = d?.late === true;
   const act = late ? "late" : (d?.action ?? "hold");
+  // The spike strategy emits a hold with no model call (latency 0) on every quiet tick: that is waiting, not a decision.
+  const waiting = act === "hold" && !!d && d.latencyMs === 0;
   const word =
-    act === "buy" ? "Buying" : act === "sell" ? "Selling" : act === "late" ? `Missed the ${venue.clock}` : venue.name === "kuru" ? "Holding" : "Skipping";
+    act === "buy" ? "Buying" : act === "sell" ? "Selling" : act === "late" ? `Missed the ${venue.clock}` : waiting ? "Waiting for a spike" : venue.name === "kuru" ? "Holding" : "Skipping";
   const wordColor =
     act === "buy"
       ? "var(--buy-ink)"
@@ -356,8 +358,12 @@ export default function FlowChart({
                 {word}
               </div>
               <div className={styles.sub}>
-                <span>{!d || late ? "late" : `${Math.round(d.latencyMs)} ms`}</span>
-                <span>conf {fmtConf(conf)}</span>
+                {waiting ? null : (
+                  <>
+                    <span>{!d || late ? "late" : `${Math.round(d.latencyMs)} ms`}</span>
+                    <span>conf {fmtConf(conf)}</span>
+                  </>
+                )}
               </div>
             </div>
           </>
