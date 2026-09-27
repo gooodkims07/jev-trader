@@ -70,12 +70,12 @@ export function spikeQuestions(v: VenueInfo) {
 export class JevSpikeModel implements SpikeModel {
   readonly name = config.jevModelId;
   private model = typeSafeAi.evaluationModel(config.jevModelId);
-  private questions: ReturnType<typeof spikeQuestions>;
-  constructor(v: VenueInfo) { this.questions = spikeQuestions(v); }
+  constructor(private readonly v: VenueInfo) {}
 
   async decide(state: SpikeState): Promise<Decision> {
     const t0 = performance.now();
-    const r = await experimental_evaluate({ model: this.model, state: state as any, questions: this.questions, maxRetries: 0 });
+    // Built per call: the question quotes the triggers, which the settings panel can change.
+    const r = await experimental_evaluate({ model: this.model, state: state as any, questions: spikeQuestions(this.v), maxRetries: 0 });
     const a = r.answers.direction;
     const p = (a.probabilities ?? { [a.choice]: 1 }) as Record<string, number>;
     return {
@@ -139,8 +139,9 @@ export class SpikeTrader {
   private lastBlock = 0;
   private totals: Totals = { blocks: 0, decisions: 0, quotes: 0, fills: 0, reverted: 0, lateBlocks: 0, skips: 0, jevUsd: 0, gasMon: 0, gasUsd: 0, feesUsd: 0, realizedUsd: 0, pnlUsd: 0, pnlMon: 0, pnlPct: 0 };
   private readonly tick1m: number;
-  private readonly tpPct = config.spike.takeProfitRoePct / config.okx.leverage;
-  private readonly slPct = config.spike.stopLossRoePct / config.okx.leverage;
+  /** Read each time: the settings panel can change the ROE targets while the bot runs. Open positions keep theirs. */
+  private get tpPct() { return config.spike.takeProfitRoePct / config.okx.leverage; }
+  private get slPct() { return config.spike.stopLossRoePct / config.okx.leverage; }
 
   constructor(
     private venue: Venue,

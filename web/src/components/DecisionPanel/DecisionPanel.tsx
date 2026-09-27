@@ -3,6 +3,7 @@
 import type { BlockEvent } from "@/lib/types";
 import { fmtPct } from "@/lib/format";
 import { useVenue } from "@/lib/venue";
+import { useLang } from "@/lib/i18n";
 import styles from "./DecisionPanel.module.css";
 
 export interface DecisionPanelProps {
@@ -50,6 +51,8 @@ function BarRow({ label, labelColor, active, value, fill, pct }: BarRowProps) {
 
 export default function DecisionPanel({ latest }: DecisionPanelProps) {
   const venue = useVenue();
+  const { t } = useLang();
+  const clockWord = t(venue.clock === "block" ? "clock.block" : "clock.tick");
   const decision = latest?.decision ?? null;
   const late = decision ? decision.late : true;
   // "hold" is treated as a non-decision, exactly as the feed does.
@@ -64,7 +67,7 @@ export default function DecisionPanel({ latest }: DecisionPanelProps) {
   const decided = decision !== null && !late && (chosen !== null || skipped);
   const pctOf = (p: number) => (decided ? fmtPct(p) : "-");
 
-  const headline = chosen ? (chosen === "buy" ? "BUY" : "SELL") : skipped ? "SKIP" : "LATE";
+  const headline = t(chosen ? (chosen === "buy" ? "word.buy" : "word.sell") : skipped ? "word.skip" : "word.late");
   const headlineColor = chosen
     ? chosen === "buy"
       ? "var(--buy-ink)"
@@ -73,15 +76,12 @@ export default function DecisionPanel({ latest }: DecisionPanelProps) {
       ? "var(--muted)"
       : "var(--late-ink)";
   const headlinePct = chosen ? fmtPct(probs[chosen]) : skipped ? fmtPct(probs.hold) : "";
-  const standing =
-    venue.name === "kuru"
-      ? `> post a bid or an ask on ${venue.label}'s ${venue.pair} book. every ${venue.clock}. no abstaining.`
-      : `> post a bid or an ask on ${venue.label}'s ${venue.pair} book, or skip when neither beats the fee. every ${venue.clock}.`;
+  const standing = t(venue.name === "kuru" ? "decision.kuruOrder" : "decision.okxOrder", { label: venue.label, pair: venue.pair, clock: clockWord });
 
   return (
     <div className={styles.panel}>
       <section className={styles.section}>
-        <div className={styles.sectionLabel}>STANDING ORDER</div>
+        <div className={styles.sectionLabel}>{t("decision.standing")}</div>
         <div className={styles.order}>
           {standing}
         </div>
@@ -89,7 +89,7 @@ export default function DecisionPanel({ latest }: DecisionPanelProps) {
 
       <section className={styles.section}>
         <div className={`${styles.sectionLabel} ${styles.sectionLabelGap}`}>
-          WHICH SIDE THIS {venue.clock.toUpperCase()}?
+          {t("decision.which", { CLOCK: clockWord.toUpperCase(), clock: clockWord })}
         </div>
 
         <div className={styles.headline} style={{ color: headlineColor }}>
@@ -100,7 +100,7 @@ export default function DecisionPanel({ latest }: DecisionPanelProps) {
         </div>
 
         <BarRow
-          label="buy"
+          label={t("bar.buy")}
           labelColor="var(--buy-ink)"
           active={chosen === "buy"}
           value={probs.buy}
@@ -108,7 +108,7 @@ export default function DecisionPanel({ latest }: DecisionPanelProps) {
           pct={pctOf(probs.buy)}
         />
         <BarRow
-          label="sell"
+          label={t("bar.sell")}
           labelColor="var(--sell-ink)"
           active={chosen === "sell"}
           value={probs.sell}

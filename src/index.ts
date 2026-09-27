@@ -3,6 +3,9 @@ import { createModel } from "./model";
 import { Trader } from "./trader";
 import { startServer } from "./server";
 import type { Venue } from "./venue";
+import { applySavedSettings, settingsHandler } from "./settings";
+
+applySavedSettings(); // data/settings.json from the dashboard, over .env
 
 const venue: Venue = config.venue === "okx" ? new (await import("./okx")).OkxVenue() : new (await import("./market")).KuruVenue();
 await venue.init();
@@ -19,6 +22,8 @@ const pxMid = (p: number) => (info.name === "kuru" ? px(p) : p.toFixed(info.pric
 const server = startServer(
   { model: model.name, wallet: venue.account, dryRun: !venue.live, market: info.market, venue: info, startedAt: Date.now(), strategy: "mm" },
   () => trader.history,
+  {},
+  { "/settings": settingsHandler(venue) },
 );
 const trader = new Trader(
   venue,

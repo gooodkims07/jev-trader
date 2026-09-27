@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { BlockEvent } from "@/lib/types";
 import { fmtInt, fmtPrice, shortTx, txUrl } from "@/lib/format";
 import { useVenue } from "@/lib/venue";
+import { useLang, type Key } from "@/lib/i18n";
 import styles from "./Feed.module.css";
 
 /** Must match `.row { height }` in Feed.module.css. */
@@ -32,7 +33,7 @@ const KIND_CLASS: Record<Kind, string> = {
   late: styles.kindLate,
 };
 
-const WORD: Record<Kind, string> = { buy: "BUY", sell: "SELL", skip: "SKIP", late: "LATE" };
+const WORD: Record<Kind, Key> = { buy: "word.buy", sell: "word.sell", skip: "word.skip", late: "word.late" };
 
 /**
  * One row per block. The word is the side the model picked, the detail is the order that went on
@@ -42,6 +43,7 @@ const WORD: Record<Kind, string> = { buy: "BUY", sell: "SELL", skip: "SKIP", lat
  */
 export default function Feed({ events }: { events: BlockEvent[] }) {
   const venue = useVenue();
+  const { t } = useLang();
   const sizeDp = Math.max(2, venue.sizeDecimals);
   const listRef = useRef<HTMLDivElement | null>(null);
   // How many whole 26px rows fit in the box the layout gives us. The list
@@ -68,7 +70,7 @@ export default function Feed({ events }: { events: BlockEvent[] }) {
 
   return (
     <section className={styles.feed}>
-      <div className={styles.label}>FEED</div>
+      <div className={styles.label}>{t("feed.title")}</div>
       <div className={styles.list} ref={listRef}>
         {rows.length === 0 ? (
           <div className={styles.empty}>no blocks yet</div>
@@ -84,7 +86,7 @@ export default function Feed({ events }: { events: BlockEvent[] }) {
             const conf =
               !decided || !decision
                 ? ""
-                : "conf " +
+                : t("feed.conf") + " " +
                   Math.max(
                     decision.probabilities.buy,
                     decision.probabilities.sell,
@@ -96,16 +98,16 @@ export default function Feed({ events }: { events: BlockEvent[] }) {
             let detail = "";
             let detailMuted = false;
             if (fill && fill.size > 0) {
-              detail = `FILL ${fmtSize(fill.size, sizeDp)} @ ${fmtPrice(fill.price, venue.priceDecimals)}`;
+              detail = `${t("word.fill")} ${fmtSize(fill.size, sizeDp)} @ ${fmtPrice(fill.price, venue.priceDecimals)}`;
             } else if (decided && quote) {
-              const word = quote.side === "buy" ? "bid" : "ask";
-              detail = `${word} ${fmtSize(quote.size, sizeDp)} @ ${fmtPrice(quote.price, venue.priceDecimals)}${quote.close ? " close" : quote.capped ? " cap" : quote.overSkip ? " override" : ""}`;
+              const word = t(quote.side === "buy" ? "word.bid" : "word.ask");
+              detail = `${word} ${fmtSize(quote.size, sizeDp)} @ ${fmtPrice(quote.price, venue.priceDecimals)}${quote.close ? ` ${t("feed.close")}` : quote.capped ? ` ${t("feed.cap")}` : quote.overSkip ? ` ${t("feed.override")}` : ""}`;
               detailMuted = quote.status === "reverted" || quote.status === "lost";
             } else if (kind === "skip") {
-              detail = "no order";
+              detail = t("feed.noOrder");
               detailMuted = true;
             } else if (decided) {
-              detail = "no quote";
+              detail = t("feed.noQuote");
               detailMuted = true;
             }
 
@@ -116,7 +118,7 @@ export default function Feed({ events }: { events: BlockEvent[] }) {
             return (
               <div key={event.block} className={rowClass}>
                 <span className={`${styles.cell} ${styles.block}`}>{fmtInt(event.block)}</span>
-                <span className={`${styles.cell} ${styles.word}`}>{WORD[kind]}</span>
+                <span className={`${styles.cell} ${styles.word}`}>{t(WORD[kind])}</span>
                 <span className={`${styles.cell} ${styles.conf}`}>{conf}</span>
                 <span className={`${styles.cell} ${styles.lat}`}>{lat}</span>
                 <span
@@ -130,7 +132,7 @@ export default function Feed({ events }: { events: BlockEvent[] }) {
                       {shortTx(fill.txHash)}
                     </a>
                   ) : quote && quote.status === "sim" ? (
-                    <span className={styles.muted}>sim</span>
+                    <span className={styles.muted}>{t("feed.sim")}</span>
                   ) : quote && quote.txHash ? (
                     <a
                       className={quote.status === "sent" ? styles.pending : quote.status === "placed" ? undefined : styles.muted}
@@ -139,12 +141,12 @@ export default function Feed({ events }: { events: BlockEvent[] }) {
                       target="_blank"
                       rel="noreferrer"
                     >
-                      {quote.status === "reverted" ? "rev" : quote.status === "lost" ? "lost" : shortTx(quote.txHash)}
+                      {quote.status === "reverted" ? t("feed.rev") : quote.status === "lost" ? t("feed.lost") : shortTx(quote.txHash)}
                     </a>
                   ) : quote ? (
                     // No chain (OKX): nothing to link, so show where the order stands.
                     <span className={quote.status === "sent" ? styles.pending : quote.status === "placed" ? undefined : styles.muted} title={quote.status}>
-                      {quote.status === "placed" ? "live" : quote.status === "reverted" ? "rej" : quote.status}
+                      {quote.status === "placed" ? t("feed.live") : quote.status === "reverted" ? t("feed.rej") : quote.status === "lost" ? t("feed.lost") : t("feed.sent")}
                     </span>
                   ) : null}
                 </span>

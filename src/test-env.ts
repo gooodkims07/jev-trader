@@ -13,6 +13,7 @@ Object.assign(process.env, {
   OKX_MAKER_FEE_RATE: "0.0002",
   OKX_EMERGENCY_STOP_PCT: "0",
   MIN_SIDE_PROB: "0",
+  ADMIN_TOKEN: "",
   STRATEGY: "mm",
   OKX_LEVERAGE: "5",
   SPIKE_1M_PCT: "0.5",

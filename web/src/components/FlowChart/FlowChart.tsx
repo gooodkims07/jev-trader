@@ -4,6 +4,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { BlockEvent } from "@/lib/types";
 import { fmtConf, fmtMon, fmtPrice, fmtSigned, fmtSignedMon } from "@/lib/format";
 import { useVenue } from "@/lib/venue";
+import { useLang } from "@/lib/i18n";
 import { smoothPath } from "./smooth";
 import styles from "./FlowChart.module.css";
 
@@ -33,6 +34,8 @@ export default function FlowChart({
   latest: BlockEvent | null;
 }) {
   const venue = useVenue();
+  const { t } = useLang();
+  const clockWord = t(venue.clock === "block" ? "clock.block" : "clock.tick");
   const panelRef = useRef<HTMLDivElement | null>(null);
   const originRef = useRef<number | null>(null);
   const scaleRef = useRef<{ lo: number; hi: number; block: number } | null>(null);
@@ -166,9 +169,9 @@ export default function FlowChart({
     const x = model.fx(e.block);
     const flip = x + model.shift > w - 168;
     const ty = Math.min(Math.max(model.fy(e.mid) - 92, PAD_TOP - 46), model.base - 82);
-    const side = e.fill ? (e.fill.side === "buy" ? "BUY" : "SELL") : null;
+    const side = e.fill ? t(e.fill.side === "buy" ? "word.buy" : "word.sell") : null;
     const q = e.quote;
-    const quoteText = q ? `${q.side === "buy" ? "bid" : "ask"} ${fmtPrice(q.price, venue.priceDecimals)}` : "no quote";
+    const quoteText = q ? `${t(q.side === "buy" ? "word.bid" : "word.ask")} ${fmtPrice(q.price, venue.priceDecimals)}` : t("chart.noQuote");
     return {
       x,
       y: model.fy(e.mid),
@@ -176,11 +179,11 @@ export default function FlowChart({
       ty,
       block: `#${e.block}`,
       price: venue.fmtMid(e.mid),
-      trade: side ? `FILL ${side} ${venue.name === "kuru" ? fmtMon(e.fill!.size, 0) : fmtMon(e.fill!.size, venue.sizeDecimals, venue.base)}` : quoteText,
+      trade: side ? `${t("word.fill")} ${side} ${venue.name === "kuru" ? fmtMon(e.fill!.size, 0) : fmtMon(e.fill!.size, venue.sizeDecimals, venue.base)}` : quoteText,
       tint: e.fill ? (e.fill.side === "buy" ? "var(--buy-ink)" : "var(--sell-ink)") : q ? (q.side === "buy" ? "var(--buy-ink)" : "var(--sell-ink)") : "var(--muted)",
-      lat: e.decision && !e.decision.late ? `${Math.round(e.decision.latencyMs)} ms` : "late",
+      lat: e.decision && !e.decision.late ? `${Math.round(e.decision.latencyMs)} ms` : t("chart.late"),
     };
-  }, [model, hover, w, venue]);
+  }, [model, hover, w, venue, t]);
 
   const shown = latest ?? events[events.length - 1] ?? null;
   const d = shown?.decision ?? null;
@@ -189,7 +192,7 @@ export default function FlowChart({
   // The spike strategy emits a hold with no model call (latency 0) on every quiet tick: that is waiting, not a decision.
   const waiting = act === "hold" && !!d && d.latencyMs === 0;
   const word =
-    act === "buy" ? "Buying" : act === "sell" ? "Selling" : act === "late" ? `Missed the ${venue.clock}` : waiting ? "Waiting for a spike" : venue.name === "kuru" ? "Holding" : "Skipping";
+    act === "buy" ? t("chart.buying") : act === "sell" ? t("chart.selling") : act === "late" ? t("chart.missed", { clock: clockWord }) : waiting ? t("chart.waiting") : venue.name === "kuru" ? t("chart.holding") : t("chart.skipping");
   const wordColor =
     act === "buy"
       ? "var(--buy-ink)"
@@ -204,8 +207,8 @@ export default function FlowChart({
   const pos = shown?.position;
   const stance =
     !pos || pos.side === "flat"
-      ? "flat"
-      : `${pos.side} ${fmtMon(pos.size, Number.isInteger(pos.size) ? 0 : Math.max(3, venue.sizeDecimals), venue.base)}`;
+      ? t("chart.flat")
+      : `${t(pos.side === "long" ? "chart.long" : "chart.short")} ${fmtMon(pos.size, Number.isInteger(pos.size) ? 0 : Math.max(3, venue.sizeDecimals), venue.base)}`;
   const pnlMon = shown?.totals?.pnlMon ?? 0;
   const pnlPct = shown?.totals?.pnlPct ?? 0;
   // Kuru shows P&L in MON, as it always has. Elsewhere one base unit can be worth a lot (BTC), so show
@@ -344,7 +347,7 @@ export default function FlowChart({
                 <span>{venue.label}</span>
                 <span>{stance}</span>
                 <span style={{ color: pnlSign >= 0 ? "var(--pnl-pos)" : "var(--pnl-neg)" }}>
-                  p&amp;l {pnlText} ({fmtSigned(pnlPct, 2)}%)
+                  {t("chart.pnl")} {pnlText} ({fmtSigned(pnlPct, 2)}%)
                 </span>
               </div>
             </div>
@@ -360,8 +363,8 @@ export default function FlowChart({
               <div className={styles.sub}>
                 {waiting ? null : (
                   <>
-                    <span>{!d || late ? "late" : `${Math.round(d.latencyMs)} ms`}</span>
-                    <span>conf {fmtConf(conf)}</span>
+                    <span>{!d || late ? t("chart.late") : `${Math.round(d.latencyMs)} ms`}</span>
+                    <span>{t("chart.conf")} {fmtConf(conf)}</span>
                   </>
                 )}
               </div>

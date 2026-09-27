@@ -1,25 +1,27 @@
 "use client";
 
 import type { SpikeSnapshot, Who } from "@/lib/types";
+import { useLang, type Key } from "@/lib/i18n";
 import styles from "./Spike.module.css";
 
-export const WHO: { who: Who; name: string; colour: string }[] = [
-  { who: "jev", name: "Jev", colour: "var(--link)" },
-  { who: "fade", name: "Fade", colour: "var(--buy)" },
-  { who: "follow", name: "Follow", colour: "var(--late)" },
+export const WHO: { who: Who; name: Key; colour: string }[] = [
+  { who: "jev", name: "spike.who.jev", colour: "var(--link)" },
+  { who: "fade", name: "spike.who.fade", colour: "var(--buy)" },
+  { who: "follow", name: "spike.who.follow", colour: "var(--late)" },
 ];
 
 /** Jev against the two rules that shadow every spike with the same exits. */
 export default function SpikeCompare({ snap }: { snap: SpikeSnapshot | null }) {
+  const { t } = useLang();
   return (
     <section className={styles.section}>
       <div className={styles.label}>
-        <span>JEV VS RULES</span>
-        <span className={styles.labelNote}>fees included</span>
+        <span>{t("spike.vs")}</span>
+        <span className={styles.labelNote}>{t("spike.feesIncluded")}</span>
       </div>
       <table className={styles.table}>
         <thead>
-          <tr><th>strategy</th><th>trades</th><th>win</th><th>avg</th><th>TP/SL/time</th><th>USDT</th></tr>
+          <tr><th>{t("spike.col.strategy")}</th><th>{t("spike.col.trades")}</th><th>{t("spike.col.win")}</th><th>{t("spike.col.avg")}</th><th>{t("spike.col.exits")}</th><th>{t("spike.col.usdt")}</th></tr>
         </thead>
         <tbody>
           {WHO.map(({ who, name, colour }) => {
@@ -27,7 +29,7 @@ export default function SpikeCompare({ snap }: { snap: SpikeSnapshot | null }) {
             const n = s?.trades ?? 0;
             return (
               <tr key={who}>
-                <td className={styles.who}><span className={styles.swatch} style={{ background: colour }} />{name}</td>
+                <td className={styles.who}><span className={styles.swatch} style={{ background: colour }} />{t(name)}</td>
                 <td>{n}</td>
                 <td>{n ? `${Math.round(((s!.wins) / n) * 100)}%` : "-"}</td>
                 <td className={n ? (s!.avgPct >= 0 ? styles.pos : styles.neg) : ""}>{n ? `${s!.avgPct >= 0 ? "+" : ""}${s!.avgPct.toFixed(2)}%` : "-"}</td>
@@ -38,7 +40,7 @@ export default function SpikeCompare({ snap }: { snap: SpikeSnapshot | null }) {
           })}
         </tbody>
       </table>
-      <div className={styles.note}>Fade trades against every spike, Follow with it. Jev only trades when it chooses to.</div>
+      <div className={styles.note}>{t("spike.vsNote")}</div>
     </section>
   );
 }

@@ -93,6 +93,7 @@ export class OkxVenue implements Venue {
   private readonly base: string;
   private ctVal = 1;
   private lotSz = 1;
+  private minSz = 0;
   private tick = 0;
   private tickDec = 0;
   private wsBook: Book | null = null;
@@ -142,6 +143,7 @@ export class OkxVenue implements Venue {
     if (inst.ctValCcy !== this.base) throw new Error(`okx: ${this.instId} contracts are in ${inst.ctValCcy}, expected ${this.base}`);
     this.ctVal = Number(inst.ctVal);
     this.lotSz = Number(inst.lotSz);
+    this.minSz = Number(inst.minSz);
     this.tick = Number(inst.tickSz);
     this.tickDec = stepDecimals(inst.tickSz);
     this.info.priceDecimals = this.tickDec;
@@ -364,6 +366,13 @@ export class OkxVenue implements Venue {
   }
 
   extras() { return { fundingRatePct: this.fundingRatePct }; }
+
+  checkSize(size: number): string | null {
+    const lots = size / this.ctVal / this.lotSz;
+    if (Math.abs(lots - Math.round(lots)) > 1e-9) return `must be a multiple of ${round(this.ctVal * this.lotSz, 8)} ${this.base}`;
+    if (size / this.ctVal < this.minSz) return `must be at least ${round(this.minSz * this.ctVal, 8)} ${this.base}`;
+    return null;
+  }
 
   /** The swap's current funding rate, in percent per period. Never throws. */
   private async readFunding() {

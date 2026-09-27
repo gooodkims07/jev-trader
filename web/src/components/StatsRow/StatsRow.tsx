@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { BlockEvent, Meta } from "@/lib/types";
 import { fmtInt, uptime } from "@/lib/format";
+import { useLang } from "@/lib/i18n";
 import styles from "./StatsRow.module.css";
 
 const DASH = "-";
@@ -16,6 +17,7 @@ export default function StatsRow({
   avgLatencyMs: number;
   meta: Meta | null;
 }) {
+  const { t } = useLang();
   const startedAt = meta?.startedAt ?? null;
   // Ticks once a second; starts on the client so SSR and hydration agree.
   const [up, setUp] = useState<string | null>(null);
@@ -39,12 +41,12 @@ export default function StatsRow({
 
   return (
     <div className={styles.stats}>
-      <span>last {last}</span>
-      <span>avg {avg}</span>
-      <span className={styles.nowrap}>{totals ? fmtInt(totals.decisions) : DASH} calls</span>
-      <span className={styles.nowrap}>{totals ? fmtInt(totals.fills) : DASH} fills</span>
+      <span>{t("stats.last")} {last}</span>
+      <span>{t("stats.avg")} {avg}</span>
+      <span className={styles.nowrap}>{totals ? fmtInt(totals.decisions) : DASH} {t("stats.calls")}</span>
+      <span className={styles.nowrap}>{totals ? fmtInt(totals.fills) : DASH} {t("stats.fills")}</span>
       <span className={styles.spacer} />
-      <span>uptime {up ?? "00:00:00"}</span>
+      <span>{t("stats.uptime")} {up ?? "00:00:00"}</span>
     </div>
   );
 }

@@ -3,10 +3,12 @@
 import { useEffect, useRef, useState } from "react";
 import type { SpikeSnapshot } from "@/lib/types";
 import { WHO } from "./SpikeCompare";
+import { useLang } from "@/lib/i18n";
 import styles from "./Spike.module.css";
 
 /** Cumulative USDT after each closed trade, for Jev and both rules, on one shared scale with a zero line. */
 export default function PnlCurve({ snap }: { snap: SpikeSnapshot | null }) {
+  const { t } = useLang();
   const ref = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState({ w: 600, h: 100 });
   useEffect(() => {
@@ -29,19 +31,19 @@ export default function PnlCurve({ snap }: { snap: SpikeSnapshot | null }) {
   return (
     <div className={styles.curve}>
       <div className={styles.label} style={{ marginBottom: 6 }}>
-        <span>CUMULATIVE P&amp;L (USDT)</span>
+        <span>{t("spike.curve")}</span>
         <span className={styles.legend}>
           {WHO.map(({ who, name, colour }) => (
             <span key={who}>
               <span className={styles.swatch} style={{ background: colour }} />
-              {name} {last ? `${last[who] >= 0 ? "+" : ""}${last[who].toFixed(3)}` : "0"}
+              {t(name)} {last ? `${last[who] >= 0 ? "+" : ""}${last[who].toFixed(3)}` : "0"}
             </span>
           ))}
         </span>
       </div>
       <div ref={ref} style={{ flex: 1, minHeight: 0 }}>
         {pts.length === 0 ? (
-          <div className={styles.empty}>No closed trades yet.</div>
+          <div className={styles.empty}>{t("spike.noTrades")}</div>
         ) : (
           <svg className={styles.curveSvg} viewBox={`0 0 ${w} ${h}`} width={w} height={h} aria-label="cumulative profit and loss">
             <line x1={0} x2={w} y1={y(0)} y2={y(0)} stroke="var(--border-2)" strokeDasharray="3 3" />

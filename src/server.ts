@@ -5,12 +5,20 @@ import type { Fill, Quote, VenueInfo } from "./venue";
 /** `wallet` is the Kuru wallet address, or the OKX account label. */
 interface Meta { model: string; wallet: string | null; dryRun: boolean; market: string; venue: VenueInfo; startedAt: number; strategy?: "mm" | "spike" }
 
-const CORS = { "access-control-allow-origin": "*", "access-control-allow-headers": "*" };
+const CORS = { "access-control-allow-origin": "*", "access-control-allow-headers": "*", "access-control-allow-methods": "GET, POST, OPTIONS" };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...CORS, "content-type": "application/json" } });
 
 /** GET / snapshot · GET /history recent blocks · GET /events SSE stream (`snapshot`, `block`, `quote`, `fill`, `ping`) */
-/** `routes`: extra GET endpoints returning JSON, e.g. /spike for the spike strategy's panels. */
-export function startServer(meta: Meta, history: () => BlockEvent[], routes: Record<string, () => unknown> = {}) {
+/**
+ * `routes`: extra GET endpoints returning JSON, e.g. /spike for the spike strategy's panels.
+ * `handlers`: endpoints that take the request (any method) and answer { status, body }, e.g. /settings.
+ */
+export function startServer(
+  meta: Meta,
+  history: () => BlockEvent[],
+  routes: Record<string, () => unknown> = {},
+  handlers: Record<string, (req: Request) => Promise<{ status: number; body: unknown }>> = {},
+) {
   const clients = new Set<ReadableStreamDefaultController<Uint8Array>>();
   const enc = new TextEncoder();
   const send = (c: ReadableStreamDefaultController<Uint8Array>, type: string, data: unknown) => {
@@ -23,6 +31,7 @@ export function startServer(meta: Meta, history: () => BlockEvent[], routes: Rec
     fetch(req) {
       const { pathname } = new URL(req.url);
       if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
+      if (handlers[pathname]) return handlers[pathname]!(req).then((r) => json(r.body, r.status));
       if (pathname === "/") return json({ ...meta, latest: history().at(-1) ?? null });
       if (pathname === "/history") return json(history());
       if (routes[pathname]) return json(routes[pathname]!());

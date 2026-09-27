@@ -2,6 +2,7 @@
 import { config } from "./config";
 import { startServer } from "./server";
 import { SpikeTrader, createSpikeModel } from "./spike";
+import { settingsHandler } from "./settings";
 import type { Venue } from "./venue";
 
 export async function runSpike(venue: Venue) {
@@ -12,6 +13,7 @@ export async function runSpike(venue: Venue) {
     { model: model.name, wallet: venue.account, dryRun: !venue.live, market: info.market, venue: info, startedAt: Date.now(), strategy: "spike" },
     () => trader.history,
     { "/spike": () => trader.snapshot() },
+    { "/settings": settingsHandler(venue) },
   );
   let lastBeat = 0;
   const trader = new SpikeTrader(venue, model, (e, note) => {

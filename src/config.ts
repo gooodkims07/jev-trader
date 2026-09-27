@@ -72,6 +72,8 @@ export const config = {
   /** How far back the model's inputs look (taker flow, sampled mids). Defaults to the horizon, as on Kuru. */
   lookbackBlocks: Number(env("LOOKBACK_BLOCKS", env("HORIZON_BLOCKS", "100"))),
   model: env("MODEL", "mock") as "mock" | "jev",
+  /** Bearer token that lets the dashboard change settings (POST /settings). Unset: settings are read-only. */
+  adminToken: env("ADMIN_TOKEN"),
   jevModelId: env("JEV_MODEL_ID", "jev-latest")!,
   jevUsdPerMTok: 0.042,
   port: Number(env("PORT", "3000")),

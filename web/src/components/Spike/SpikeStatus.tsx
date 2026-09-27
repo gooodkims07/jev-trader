@@ -2,6 +2,7 @@
 
 import type { SpikeSnapshot } from "@/lib/types";
 import { useVenue } from "@/lib/venue";
+import { useLang } from "@/lib/i18n";
 import styles from "./Spike.module.css";
 
 const sign = (n: number, d: number) => `${n >= 0 ? "+" : "-"}${Math.abs(n).toFixed(d)}`;
@@ -26,6 +27,7 @@ function Gauge({ label, pct, threshold }: { label: string; pct: number | null; t
 /** Jev's open position (entry, take-profit, stop, time left), and how close the market is to the next spike. */
 export default function SpikeStatus({ snap }: { snap: SpikeSnapshot | null }) {
   const venue = useVenue();
+  const { t } = useLang();
   const plan = snap?.plan;
   const jev = snap?.open.find((o) => o.who === "jev") ?? null;
   const px = (n: number) => n.toFixed(venue.priceDecimals);
@@ -33,10 +35,10 @@ export default function SpikeStatus({ snap }: { snap: SpikeSnapshot | null }) {
     <>
       <section className={styles.section}>
         <div className={styles.label}>
-          <span>JEV POSITION</span>
+          <span>{t("spike.position")}</span>
           {plan ? (
             <span className={styles.labelNote}>
-              TP +{plan.takeProfitRoePct}% / SL -{plan.stopLossRoePct}% ROE at {plan.leverage}x
+              {t("spike.exits", { tp: plan.takeProfitRoePct, sl: plan.stopLossRoePct, lev: plan.leverage })}
             </span>
           ) : null}
         </div>
@@ -44,35 +46,35 @@ export default function SpikeStatus({ snap }: { snap: SpikeSnapshot | null }) {
           <>
             <div className={styles.posHead}>
               <span className={styles.posWord} style={{ color: jev.side === "buy" ? "var(--buy-ink)" : "var(--sell-ink)" }}>
-                {jev.side === "buy" ? "LONG" : "SHORT"} {plan?.size} {plan?.base}
+                {t(jev.side === "buy" ? "spike.long" : "spike.short")} {plan?.size} {plan?.base}
               </span>
               <span className={`${styles.posRoe} ${jev.unrealizedRoePct >= 0 ? styles.pos : styles.neg}`}>
                 ROE {sign(jev.unrealizedRoePct, 1)}%
               </span>
             </div>
             <div className={styles.kv}>
-              <div><div className={styles.k}>ENTRY</div><div className={styles.v}>{px(jev.entry)}</div></div>
-              <div><div className={styles.k}>TAKE PROFIT</div><div className={styles.v}>{px(jev.tp)}</div></div>
-              <div><div className={styles.k}>STOP</div><div className={styles.v}>{px(jev.sl)}</div></div>
+              <div><div className={styles.k}>{t("spike.entry")}</div><div className={styles.v}>{px(jev.entry)}</div></div>
+              <div><div className={styles.k}>{t("spike.tp")}</div><div className={styles.v}>{px(jev.tp)}</div></div>
+              <div><div className={styles.k}>{t("spike.sl")}</div><div className={styles.v}>{px(jev.sl)}</div></div>
               <div>
-                <div className={styles.k}>TIME LEFT</div>
-                <div className={styles.v}>{plan ? `${Math.max(0, Math.round(plan.maxHoldMin - jev.heldMin))} min` : "-"}</div>
+                <div className={styles.k}>{t("spike.timeLeft")}</div>
+                <div className={styles.v}>{plan ? t("spike.min", { n: Math.max(0, Math.round(plan.maxHoldMin - jev.heldMin)) }) : "-"}</div>
               </div>
             </div>
           </>
         ) : (
-          <div className={styles.flat}>flat, waiting for a spike</div>
+          <div className={styles.flat}>{t("spike.flat")}</div>
         )}
       </section>
       <section className={styles.section}>
         <div className={styles.label}>
-          <span>DISTANCE TO A SPIKE</span>
+          <span>{t("spike.distance")}</span>
           <span className={styles.labelNote}>
-            {snap && snap.gauge.cooldownSec > 0 ? `cooldown ${snap.gauge.cooldownSec}s` : plan ? `trigger ${plan.move1mPct}% / 1m or ${plan.move3mPct}% / 3m` : ""}
+            {snap && snap.gauge.cooldownSec > 0 ? t("spike.cooldown", { n: snap.gauge.cooldownSec }) : plan ? t("spike.trigger", { a: plan.move1mPct, b: plan.move3mPct }) : ""}
           </span>
         </div>
-        <Gauge label="1m" pct={snap?.gauge.r1Pct ?? null} threshold={plan?.move1mPct ?? 0.5} />
-        <Gauge label="3m" pct={snap?.gauge.r3Pct ?? null} threshold={plan?.move3mPct ?? 0.8} />
+        <Gauge label={t("spike.g1m")} pct={snap?.gauge.r1Pct ?? null} threshold={plan?.move1mPct ?? 0.5} />
+        <Gauge label={t("spike.g3m")} pct={snap?.gauge.r3Pct ?? null} threshold={plan?.move3mPct ?? 0.8} />
       </section>
     </>
   );

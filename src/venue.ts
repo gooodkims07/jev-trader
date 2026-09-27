@@ -158,6 +158,8 @@ export interface Venue {
    * size in the base asset, average entry). Optional; OKX places its emergency stop here.
    */
   protect?(position: { mon: number; entry: number | null }): void;
+  /** Why this order size is not tradable here, or null if it is (e.g. OKX lot size). For the settings panel. */
+  checkSize?(size: number): string | null;
   /** Take these resting orders off the book without placing one (the model chose to skip). Resolves to the ids gone. */
   cancel?(ids: OrderId[]): Promise<OrderId[]>;
   /** Market facts the model sees beyond the book. OKX: the swap's current funding rate. */
