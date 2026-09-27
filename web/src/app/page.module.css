@@ -76,3 +76,10 @@
     width: 100%;
   }
 }
+
+/* Spike dashboard: the right column scales with the window width (Kuru's demo keeps its 470 px). */
+@media (min-width: 900px) {
+  .rightSpike {
+    width: clamp(340px, 34vw, 520px);
+  }
+}

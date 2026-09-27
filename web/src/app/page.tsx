@@ -30,7 +30,8 @@ export default function Page() {
   return (
     <VenueProvider meta={feed.meta}>
     <LangProvider fallback={isKuru ? "en" : "ko"}>
-    <div className="card">
+    {/* The spike dashboard uses the screen's width (up to 1880 px); the Kuru demo keeps its 1400 px card. */}
+    <div className="card" style={spikeMode ? { maxWidth: "min(1880px, calc(100% - 32px))" } : undefined}>
       <Header meta={feed.meta} latest={feed.latest} connection={feed.connection} onSettings={isKuru ? undefined : () => setSettingsOpen(true)} />
       <StatsRow latest={feed.latest} avgLatencyMs={feed.avgLatencyMs} meta={feed.meta} />
       <div className={styles.main}>
@@ -41,7 +42,7 @@ export default function Page() {
           {spikeMode ? <PnlCurve snap={spike} /> : null}
         </div>
         {spikeMode ? (
-          <div className={styles.right}>
+          <div className={`${styles.right} ${styles.rightSpike}`}>
             <div>
               <SpikeStatus snap={spike} apiUrl={API_URL} />
               <SpikeCompare snap={spike} />

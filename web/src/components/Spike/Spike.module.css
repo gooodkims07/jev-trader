@@ -1,7 +1,8 @@
 /* Spike strategy panels. Same tokens and type as the decision panel; no motion beyond width transitions. */
 
+/* Sizes follow the viewport height so the whole dashboard fits one screen, roomy on tall screens, tight on short. */
 .section {
-  padding: 16px 18px;
+  padding: clamp(8px, 1.6vh, 18px) 18px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -12,7 +13,7 @@
   line-height: 1.2;
   letter-spacing: 0.1em;
   color: var(--muted-2);
-  margin-bottom: 10px;
+  margin-bottom: clamp(5px, 1vh, 10px);
   display: flex;
   justify-content: space-between;
 }
@@ -39,14 +40,14 @@
 .posWord {
   font-family: var(--font-sans), Inter, system-ui, sans-serif;
   font-weight: 600;
-  font-size: 24px;
+  font-size: clamp(18px, 2.6vh, 26px);
   line-height: 1.1;
 }
 
 .posRoe {
   font-family: var(--font-mono), "Geist Mono", ui-monospace, monospace;
   font-weight: 500;
-  font-size: 18px;
+  font-size: clamp(14px, 2vh, 19px);
 }
 
 .kv {
@@ -137,7 +138,7 @@
 
 .table td {
   text-align: right;
-  padding: 4px 0;
+  padding: clamp(2px, 0.5vh, 5px) 0;
   border-top: 1px solid var(--border);
   font-family: var(--font-mono), "Geist Mono", ui-monospace, monospace;
   font-variant-numeric: tabular-nums;
@@ -182,7 +183,7 @@
 }
 
 .listLabel {
-  padding: 16px 18px 8px;
+  padding: clamp(8px, 1.6vh, 18px) 18px clamp(4px, 0.8vh, 8px);
 }
 
 .row {
@@ -190,7 +191,7 @@
   grid-template-columns: 44px 58px 1fr 132px;
   gap: 8px;
   align-items: baseline;
-  padding: 6px 0;
+  padding: clamp(3px, 0.7vh, 7px) 0;
   border-top: 1px solid var(--border);
   font-size: 12px;
 }
@@ -213,8 +214,8 @@
 
 .curve {
   flex: none;
-  height: 150px;
-  margin-top: 12px;
+  height: clamp(96px, 18vh, 220px);
+  margin-top: clamp(8px, 1.4vh, 14px);
   border: 1px solid var(--border);
   border-radius: 16px;
   padding: 12px 14px;
@@ -258,7 +259,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
-  margin: -2px 0 12px;
+  margin: -2px 0 clamp(6px, 1.2vh, 12px);
 }
 
 .chip {
@@ -372,4 +373,14 @@
 .timeLeft b {
   color: var(--ink-2);
   font-weight: 600;
+}
+
+/* Short screens: drop what explains rather than informs, so the spike list keeps a few rows. */
+@media (min-width: 900px) and (max-height: 820px) {
+  .note {
+    display: none;
+  }
+  .timeLeft {
+    margin-top: 4px;
+  }
 }
