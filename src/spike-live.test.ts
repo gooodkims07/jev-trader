@@ -189,7 +189,12 @@ test("sync: a position opened in the app while the bot is flat is taken over, wi
     const t = new SpikeTrader(f.v, says("hold"), () => {});
     f.ex.pos = -4; f.ex.avg = 2.1;
     await settle(t, 10000);
-    expect(t.snapshot().open[0]).toMatchObject({ side: "sell", size: 4, entry: 2.1 });
+    expect(t.snapshot().open[0]).toMatchObject({ side: "sell", size: 4, entry: 2.1, adds: 0 });
+    // 20 at 5 a time: counted as an entry and 3 adds
+    const g = liveVenue(); const t2 = new SpikeTrader(g.v, says("hold"), () => {});
+    g.ex.pos = 20; g.ex.avg = 2;
+    await settle(t2, 10100);
+    expect(t2.snapshot().open[0]).toMatchObject({ size: 20, adds: 3 });
     expect(f.ex.exits.at(-1)).toMatchObject({ side: "sell" });
     expect(f.ex.exits.at(-1)!.sl).toBeCloseTo(2.1 * 1.06, 9);
   } finally { reset(); }

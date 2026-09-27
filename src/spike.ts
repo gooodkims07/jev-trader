@@ -569,7 +569,9 @@ export class SpikeTrader {
     const side: Side = pos.size > 0 ? "buy" : "sell", dir = pos.size > 0 ? 1 : -1, size = Math.abs(pos.size);
     const entry = pos.avgPx || book.mid;
     const fee = config.spike.takerFeeRate * entry * size;
-    const n: Open = { who: "jev", side, entry, size, adds: 0, openedAt: block, spikeBlock: -1, openedTs: Date.now() - 1000, entryFees: fee, tp: entry * (1 + (dir * this.tpPct) / 100), sl: entry * (1 - (dir * this.slPct) / 100) };
+    // Adds counted as if it was built from orders of the current size: 40 at 10 a time is 1 + 3 adds.
+    const adds = Math.max(0, Math.round(size / config.tradeSize) - 1);
+    const n: Open = { who: "jev", side, entry, size, adds, openedAt: block, spikeBlock: -1, openedTs: Date.now() - 1000, entryFees: fee, tp: entry * (1 + (dir * this.tpPct) / 100), sl: entry * (1 - (dir * this.slPct) / 100) };
     this.open.set("jev", n);
     this.feesUsd += fee; this.realized -= fee;
     n.exitsOnExchange = await exec.setExits({ side, tp: n.tp, sl: n.sl });
