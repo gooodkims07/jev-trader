@@ -1,6 +1,7 @@
 /* FlowChart: the hero. A calm, responsive price flow drawn by hand in SVG. */
 
 .wrap {
+  position: relative;
   width: 100%;
   height: 100%;
   min-height: 0;
@@ -290,4 +291,47 @@
   padding: 0 8px;
   border-radius: 999px;
   font: 500 11px var(--font-sans), Inter, system-ui, sans-serif;
+}
+
+/* time range buttons (1m to 1h) */
+.zoom .range,
+.zoom .rangeOn {
+  width: auto;
+  min-width: 30px;
+  padding: 0 7px;
+  border-radius: 999px;
+  font: 500 11px var(--font-sans), Inter, system-ui, sans-serif;
+}
+
+.zoom .rangeOn {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--bg);
+}
+
+.zoom .zoomGap {
+  margin-left: 8px;
+}
+
+/* narrow screens: under the chart, not over it */
+@media (max-width: 640px) {
+  /* the chart keeps its 4:3 shape and the buttons add to the height (the page scrolls here) */
+  .wrapControls {
+    height: auto;
+  }
+
+  .wrapControls .panel {
+    flex: none;
+    aspect-ratio: 4 / 3;
+  }
+
+  .zoom {
+    position: static;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin-top: 8px;
+    padding: 0;
+    background: none;
+    border: 0;
+  }
 }

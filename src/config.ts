@@ -79,7 +79,8 @@ export const config = {
   jevModelId: env("JEV_MODEL_ID", "jev-latest")!,
   jevUsdPerMTok: 0.042,
   port: Number(env("PORT", "3000")),
-  historySize: 1000,
+  /** Blocks kept for the dashboard. OKX: an hour at a 1 s tick, the chart's longest range. */
+  historySize: venue === "okx" ? 3600 : 1000,
   /**
    * mm: market making (one post-only order per block; Kuru's demo, and OKX). spike (OKX, dry run only for
    * now): wait for a sharp move, let Jev choose long, short or stay out, enter at market, exit at

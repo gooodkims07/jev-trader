@@ -36,7 +36,7 @@ export default function Page() {
       <StatsRow latest={feed.latest} avgLatencyMs={feed.avgLatencyMs} meta={feed.meta} />
       <div className={styles.main}>
         <div className={styles.left}>
-          <div className={styles.chartWrap}>
+          <div className={isKuru ? styles.chartWrap : `${styles.chartWrap} ${styles.chartWrapControls}`}>
             <FlowChart events={feed.events} latest={feed.latest} />
           </div>
           {spikeMode ? <PnlCurve snap={spike} /> : null}

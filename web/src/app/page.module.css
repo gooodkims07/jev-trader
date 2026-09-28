@@ -72,6 +72,11 @@
     aspect-ratio: 4 / 3;
   }
 
+  /* OKX: the chart keeps 4:3 itself and its range buttons sit under it */
+  .chartWrapControls {
+    aspect-ratio: auto;
+  }
+
   .right {
     width: 100%;
   }

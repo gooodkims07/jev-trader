@@ -5,8 +5,8 @@ import type { BlockEvent, ConnectionState, FeedState, Fill, Meta, Quote, VenueIn
 
 export { useUptime } from "./useUptime";
 
-/** Max block events kept in memory (oldest -> newest). */
-const CAP = 1000;
+/** Max block events kept in memory (oldest -> newest): an hour at OKX's 1 s tick (the chart's longest range). */
+const CAP = 3600;
 /** Reconnect backoff, doubling from 1s up to 10s. */
 const BACKOFF_MIN = 1000;
 const BACKOFF_MAX = 10_000;

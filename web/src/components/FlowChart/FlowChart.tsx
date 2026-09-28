@@ -17,6 +17,11 @@ const MIN_RANGE_PCT = 0.002; // floor of 0.20% of price, so bps noise stays calm
 const CELL_W = 6;
 const CELL_H = 18;
 const TAG_W = 58;
+/** OKX chart ranges, in seconds (blocks are seconds there). */
+const RANGES = [60, 180, 300, 600, 900, 1800, 3600];
+const DEFAULT_RANGE = 300;
+/** Seconds between time labels: the first at least 90 px apart. */
+const LABEL_EVERY = [5, 10, 15, 30, 60, 120, 300, 600, 900, 1800];
 
 function cellFill(e: BlockEvent): string {
   if (e.decision?.late) return "var(--late-cell)";
@@ -43,32 +48,51 @@ export default function FlowChart({
   const [hover, setHover] = useState<number | null>(null);
   const gid = useId().replace(/[^a-zA-Z0-9]/g, "");
 
-  // Zoom (OKX only; the Kuru demo stays fixed): x scales the step per point (how much time shows), y narrows
-  // or widens the price band. Wheel zooms x, Shift+wheel zooms y; the buttons do the same. Kept per browser.
+  // OKX only (the Kuru demo stays fixed): the time range shown (buttons, or the wheel stepping through them) and
+  // a price zoom that narrows or widens the band (Shift+wheel, or the buttons). Both kept per browser.
   const zoomable = venue.name !== "kuru";
-  const [zoom, setZoom] = useState({ x: 1, y: 1 });
+  const [windowSec, setWindowSec] = useState(DEFAULT_RANGE);
+  const [yz, setYz] = useState(1);
   useEffect(() => {
-    try { const z = JSON.parse(localStorage.getItem("jev.chartZoom") ?? "null"); if (z && z.x > 0 && z.y > 0) setZoom(z); } catch { /* none saved */ }
+    try {
+      const r = Number(localStorage.getItem("jev.chartRange"));
+      if (RANGES.includes(r)) setWindowSec(r);
+      const y = Number(localStorage.getItem("jev.chartZoomY"));
+      if (y > 0) setYz(y);
+    } catch { /* none saved */ }
   }, []);
-  const applyZoom = useCallback((axis: "x" | "y", factor: number | null) => {
-    setZoom((z) => {
-      const next = factor === null ? { x: 1, y: 1 } : { ...z, [axis]: Math.min(axis === "x" ? 6 : 8, Math.max(axis === "x" ? 0.25 : 0.5, z[axis] * factor)) };
-      try { localStorage.setItem("jev.chartZoom", JSON.stringify(next)); } catch { /* not kept */ }
+  const pickRange = useCallback((r: number) => {
+    setWindowSec(r);
+    try { localStorage.setItem("jev.chartRange", String(r)); } catch { /* not kept */ }
+  }, []);
+  const zoomY = useCallback((factor: number | null) => {
+    setYz((z) => {
+      const next = factor === null ? 1 : Math.min(8, Math.max(0.5, z * factor));
+      try { localStorage.setItem("jev.chartZoomY", String(next)); } catch { /* not kept */ }
       return next;
     });
   }, []);
   useEffect(() => {
     const el = panelRef.current;
     if (!el || !zoomable) return;
+    let acc = 0; // a trackpad sends many small deltas: one range step per 120
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
-      applyZoom(e.shiftKey ? "y" : "x", e.deltaY < 0 ? 1.15 : 1 / 1.15);
+      if (e.shiftKey) { zoomY((e.deltaY || e.deltaX) < 0 ? 1.15 : 1 / 1.15); return; }
+      acc += e.deltaY;
+      if (Math.abs(acc) < 120) return;
+      const dir = acc > 0 ? 1 : -1; // down: longer range
+      acc = 0;
+      setWindowSec((r) => {
+        const i = Math.min(RANGES.length - 1, Math.max(0, RANGES.indexOf(r) + dir));
+        try { localStorage.setItem("jev.chartRange", String(RANGES[i])); } catch { /* not kept */ }
+        return RANGES[i];
+      });
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
-  }, [zoomable, applyZoom]);
-  const step = STEP * (zoomable ? zoom.x : 1);
-  const yz = zoomable ? zoom.y : 1;
+  }, [zoomable, zoomY]);
+  const yzoom = zoomable ? yz : 1;
 
   useEffect(() => {
     const el = panelRef.current;
@@ -91,21 +115,29 @@ export default function FlowChart({
     const plotH = h - PAD_TOP - PAD_BOTTOM;
     if (w < 160 || plotH < 60) return null;
 
-    const n = Math.max(2, Math.ceil((w - ANCHOR_GAP) / step) + 2);
-    let series = events.slice(-n);
+    // Kuru: STEP px per block, as many blocks as fit. OKX: blocks are seconds, and the chosen range fills the width.
+    const n = Math.max(2, Math.ceil((w - ANCHOR_GAP) / STEP) + 2);
+    let series = zoomable ? events.slice() : events.slice(-n);
     const tail = series[series.length - 1];
-    if (latest && (!tail || latest.block > tail.block)) series = [...series, latest].slice(-n);
+    if (latest && (!tail || latest.block > tail.block)) series = [...series, latest];
     else if (latest && tail && latest.block === tail.block) series[series.length - 1] = latest;
-    const last = series[series.length - 1];
+    let last = series[series.length - 1];
     if (!last) return null;
+    // Block numbers per point: 1 on Kuru; on OKX a 5 s tick moves 5 at a time. The typical gap between recent points.
+    const gaps = series.slice(-30).map((e, i, a) => (i ? e.block - a[i - 1].block : 0)).filter((g) => g > 0).sort((a, b) => a - b);
+    const span = gaps.length ? gaps[Math.floor(gaps.length / 2)] : 1;
+    if (zoomable) {
+      const from = last.block - windowSec - 2 * span; // one point beyond each edge, so the line runs off it
+      series = series.filter((e) => e.block >= from);
+      if (series.length < 2) series = events.slice(-2).concat(series).slice(-2);
+      last = series[series.length - 1];
+    } else series = series.slice(-n);
 
     if (originRef.current === null) originRef.current = series[0].block;
     const origin = originRef.current;
-    // Block numbers per step: 1 on Kuru; on OKX blocks are seconds, so a 5 s tick moves 5 at a time. Use the
-    // typical gap between recent points, so one step is STEP px whatever the tick (and after it changes).
-    const gaps = series.slice(-30).map((e, i, a) => (i ? e.block - a[i - 1].block : 0)).filter((g) => g > 0).sort((a, b) => a - b);
-    const span = gaps.length ? gaps[Math.floor(gaps.length / 2)] : 1;
-    const fx = (b: number) => ((b - origin) * step) / span;
+    const pxPerBlock = zoomable ? (w - ANCHOR_GAP) / windowSec : STEP / span;
+    const fx = (b: number) => (b - origin) * pxPerBlock;
+    const step = pxPerBlock * span; // px between points
 
     // --- value scale: window min/max, floored to 0.20% of price, eased 10%/block
     let lo = Infinity;
@@ -144,8 +176,8 @@ export default function FlowChart({
     }
     scaleRef.current = { lo, hi, block: last.block };
     // Vertical zoom around the middle of the (eased) band; the easing itself stays on the unzoomed band.
-    if (yz !== 1) {
-      const c = (lo + hi) / 2, half = (hi - lo) / 2 / yz;
+    if (yzoom !== 1) {
+      const c = (lo + hi) / 2, half = (hi - lo) / 2 / yzoom;
       lo = c - half;
       hi = c + half;
     }
@@ -158,12 +190,26 @@ export default function FlowChart({
     const base = h - PAD_BOTTOM;
     const area = `${line} L${pts[pts.length - 1][0].toFixed(1)} ${base} L${pts[0][0].toFixed(1)} ${base} Z`;
 
-    const cells = series.map((e, i) => ({
-      key: e.block,
-      x: fx(e.block) - CELL_W / 2,
-      fill: cellFill(e),
-      opacity: i === series.length - 1 ? 1 : e.quote && e.quote.status === "sent" ? 0.6 : 0.82,
-    }));
+    // One cell per point while they fit; on a long range one per bucket of points, coloured by its last fill
+    // (else its last point), so the strip stays a strip.
+    const per = step >= CELL_W + 2 ? 1 : Math.ceil((CELL_W + 2) / step);
+    const groups: BlockEvent[][] = [];
+    for (const e of series) {
+      const g = groups[groups.length - 1];
+      const id = Math.floor(e.block / (per * span));
+      if (g && Math.floor(g[0].block / (per * span)) === id) g.push(e);
+      else groups.push([e]);
+    }
+    const cells = groups.map((g, i) => {
+      const e = g[g.length - 1];
+      const filled = [...g].reverse().find((x) => x.fill);
+      return {
+        key: e.block,
+        x: fx(e.block) - CELL_W / 2,
+        fill: cellFill(filled ?? e),
+        opacity: i === groups.length - 1 ? 1 : e.quote && e.quote.status === "sent" ? 0.6 : 0.82,
+      };
+    });
 
     const beads = series
       .filter((e) => e.fill)
@@ -181,15 +227,16 @@ export default function FlowChart({
 
     const byBlock = new Map(series.map((e) => [e.block, e]));
 
-    // Clock time under the strip, every 10 steps, pinned to block numbers so labels slide with the data
-    // instead of hopping. OKX only: the Kuru demo stays as it was.
-    const every = 10 * span;
-    const times =
-      venue.name === "kuru"
-        ? []
-        : series
-            .filter((e) => e.block % every === 0 && e.ts)
-            .map((e) => ({ key: e.block, x: fx(e.block), label: new Date(e.ts).toLocaleTimeString("en-GB", { hour12: false }) }));
+    // Clock time under the strip (OKX only: the Kuru demo stays as it was). Blocks are seconds, so a label sits
+    // on each round time, spaced to fit the range, and slides with the data instead of hopping.
+    const every = LABEL_EVERY.find((s) => s * pxPerBlock >= 90) ?? 3600;
+    const times: { key: number; x: number; label: string }[] = [];
+    if (zoomable) {
+      for (let b = Math.ceil(series[0].block / every) * every; b <= last.block; b += every) {
+        const d = new Date(b * 1000);
+        times.push({ key: b, x: fx(b), label: d.toLocaleTimeString("en-GB", every >= 60 ? { hour: "2-digit", minute: "2-digit", hour12: false } : { hour12: false }) });
+      }
+    }
 
     return {
       line,
@@ -209,8 +256,9 @@ export default function FlowChart({
       endY: Math.min(Math.max(fy(last.mid), PAD_TOP), base),
       plotTop: PAD_TOP,
       plotH,
+      step,
     };
-  }, [events, latest, w, h, venue, step, yz]);
+  }, [events, latest, w, h, venue, zoomable, windowSec, yzoom]);
 
   const hv = useMemo(() => {
     if (!model || hover === null) return null;
@@ -268,7 +316,7 @@ export default function FlowChart({
   const pnlSign = venue.name === "kuru" ? pnlMon : pnlQuote;
 
   return (
-    <div className={styles.wrap}>
+    <div className={zoomable ? `${styles.wrap} ${styles.wrapControls}` : styles.wrap}>
       <div
         ref={panelRef}
         className={styles.panel}
@@ -276,7 +324,7 @@ export default function FlowChart({
           if (ev.pointerType !== "mouse" || !model || originRef.current === null) return;
           const r = ev.currentTarget.getBoundingClientRect();
           const x = ev.clientX - r.left - model.shift;
-          let best: number | null = null, dist = step;
+          let best: number | null = null, dist = Math.max(model.step, 4);
           for (const b of model.byBlock.keys()) { const d = Math.abs(model.fx(b) - x); if (d <= dist) { dist = d; best = b; } }
           setHover(best);
         }}
@@ -401,18 +449,6 @@ export default function FlowChart({
 
             <div className={styles.fade} />
 
-            {zoomable ? (
-              <div className={styles.zoom} onPointerMove={(e) => e.stopPropagation()}>
-                <span>{t("zoom.x")}</span>
-                <button type="button" onClick={() => applyZoom("x", 1 / 1.25)} aria-label="zoom out time">-</button>
-                <button type="button" onClick={() => applyZoom("x", 1.25)} aria-label="zoom in time">+</button>
-                <span>{t("zoom.y")}</span>
-                <button type="button" onClick={() => applyZoom("y", 1 / 1.25)} aria-label="zoom out price">-</button>
-                <button type="button" onClick={() => applyZoom("y", 1.25)} aria-label="zoom in price">+</button>
-                {zoom.x !== 1 || zoom.y !== 1 ? <button type="button" className={styles.zoomReset} onClick={() => applyZoom("x", null)}>{t("zoom.reset")}</button> : null}
-              </div>
-            ) : null}
-
             <div className={styles.tl}>
               <div className={styles.price} key={shown.mid}>
                 {venue.fmtMid(shown.mid)}
@@ -447,6 +483,19 @@ export default function FlowChart({
           </>
         )}
       </div>
+      {zoomable ? (
+        <div className={styles.zoom} onPointerMove={(e) => e.stopPropagation()}>
+          {RANGES.map((r) => (
+            <button key={r} type="button" className={r === windowSec ? styles.rangeOn : styles.range} aria-pressed={r === windowSec} onClick={() => pickRange(r)}>
+              {r >= 3600 ? t("range.h", { n: r / 3600 }) : t("range.m", { n: r / 60 })}
+            </button>
+          ))}
+          <span className={styles.zoomGap}>{t("zoom.y")}</span>
+          <button type="button" onClick={() => zoomY(1 / 1.25)} aria-label="zoom out price">-</button>
+          <button type="button" onClick={() => zoomY(1.25)} aria-label="zoom in price">+</button>
+          {yz !== 1 ? <button type="button" className={styles.zoomReset} onClick={() => zoomY(null)}>{t("zoom.reset")}</button> : null}
+        </div>
+      ) : null}
     </div>
   );
 }
