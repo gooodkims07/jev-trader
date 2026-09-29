@@ -22,6 +22,27 @@ const RANGES = [60, 180, 300, 600, 900, 1800, 3600];
 const DEFAULT_RANGE = 300;
 /** Seconds between time labels: the first at least 90 px apart. */
 const LABEL_EVERY = [5, 10, 15, 30, 60, 120, 300, 600, 900, 1800];
+/** RSI panel (OKX): Wilder's RSI over RSI_N candles, the candle sized so about 60 fit the range. Display only. */
+const RSI_N = 14;
+const RSI_CANDLES = [1, 5, 10, 15, 30, 60];
+const RSI_MAX_H = 72;
+
+/** Wilder's RSI of `closes`: one value per close from the RSI_N-th change on (null before). */
+function rsiOf(closes: number[]): (number | null)[] {
+  const out: (number | null)[] = closes.map(() => null);
+  let ag = 0, al = 0;
+  for (let i = 1; i < closes.length; i++) {
+    const d = closes[i] - closes[i - 1], g = Math.max(d, 0), l = Math.max(-d, 0);
+    if (i <= RSI_N) {
+      ag += g / RSI_N; al += l / RSI_N;
+      if (i < RSI_N) continue;
+    } else {
+      ag = (ag * (RSI_N - 1) + g) / RSI_N; al = (al * (RSI_N - 1) + l) / RSI_N;
+    }
+    out[i] = al === 0 ? (ag === 0 ? 50 : 100) : 100 - 100 / (1 + ag / al);
+  }
+  return out;
+}
 
 function cellFill(e: BlockEvent): string {
   if (e.decision?.late) return "var(--late-cell)";
@@ -53,12 +74,20 @@ export default function FlowChart({
   const zoomable = venue.name !== "kuru";
   const [windowSec, setWindowSec] = useState(DEFAULT_RANGE);
   const [yz, setYz] = useState(1);
+  const [rsiOn, setRsiOn] = useState(true);
+  const toggleRsi = useCallback(() => {
+    setRsiOn((on) => {
+      try { localStorage.setItem("jev.chartRsi", on ? "0" : "1"); } catch { /* not kept */ }
+      return !on;
+    });
+  }, []);
   useEffect(() => {
     try {
       const r = Number(localStorage.getItem("jev.chartRange"));
       if (RANGES.includes(r)) setWindowSec(r);
       const y = Number(localStorage.getItem("jev.chartZoomY"));
       if (y > 0) setYz(y);
+      if (localStorage.getItem("jev.chartRsi") === "0") setRsiOn(false);
     } catch { /* none saved */ }
   }, []);
   const pickRange = useCallback((r: number) => {
@@ -112,7 +141,11 @@ export default function FlowChart({
   const { w, h } = size;
 
   const model = useMemo(() => {
-    const plotH = h - PAD_TOP - PAD_BOTTOM;
+    // The RSI panel takes the bottom of the plot when there is room for both.
+    const room = h - PAD_TOP - PAD_BOTTOM;
+    const rsiH = zoomable && rsiOn ? Math.min(RSI_MAX_H, Math.round(room * 0.3)) : 0;
+    const showRsi = rsiH >= 40;
+    const plotH = room - (showRsi ? rsiH + 12 : 0);
     if (w < 160 || plotH < 60) return null;
 
     // Kuru: STEP px per block, as many blocks as fit. OKX: blocks are seconds, and the chosen range fills the width.
@@ -187,7 +220,7 @@ export default function FlowChart({
 
     const pts = series.map((e) => [fx(e.block), fy(e.mid)] as const);
     const line = smoothPath(pts);
-    const base = h - PAD_BOTTOM;
+    const base = PAD_TOP + plotH;
     const area = `${line} L${pts[pts.length - 1][0].toFixed(1)} ${base} L${pts[0][0].toFixed(1)} ${base} Z`;
 
     // One cell per point while they fit; on a long range one per bucket of points, coloured by its last fill
@@ -238,7 +271,28 @@ export default function FlowChart({
       }
     }
 
+    // RSI from candles of `candle` seconds (closes: the last mid in each), warmed up on the history left of the view.
+    let rsi: { path: string; top: number; h: number; y: (v: number) => number; last: number | null; candle: number } | null = null;
+    if (showRsi) {
+      const candle = Math.max(span, RSI_CANDLES.find((c) => c >= windowSec / 60) ?? 60);
+      const firstShown = last.block - windowSec - 2 * span;
+      const all = events.length && latest && latest.block > events[events.length - 1].block ? [...events, latest] : events;
+      const closes: { b: number; c: number }[] = [];
+      for (const e of all) {
+        if (e.block < firstShown - (RSI_N + 2) * candle) continue;
+        const id = Math.floor(e.block / candle);
+        const prev = closes[closes.length - 1];
+        if (prev && Math.floor(prev.b / candle) === id) { prev.b = e.block; prev.c = e.mid; } else closes.push({ b: e.block, c: e.mid });
+      }
+      const vals = rsiOf(closes.map((x) => x.c));
+      const top = h - PAD_BOTTOM - rsiH;
+      const ry = (v: number) => top + (1 - v / 100) * rsiH;
+      const pts = closes.map((x, i) => ({ x: fx(x.b), v: vals[i] })).filter((p): p is { x: number; v: number } => p.v !== null && p.x >= fx(firstShown) - step);
+      rsi = { path: pts.map((p, i) => `${i ? "L" : "M"}${p.x.toFixed(1)} ${ry(p.v).toFixed(1)}`).join(" "), top, h: rsiH, y: ry, last: vals[vals.length - 1] ?? null, candle };
+    }
+
     return {
+      rsi,
       line,
       area,
       cells,
@@ -258,7 +312,7 @@ export default function FlowChart({
       plotH,
       step,
     };
-  }, [events, latest, w, h, venue, zoomable, windowSec, yzoom]);
+  }, [events, latest, w, h, venue, zoomable, windowSec, yzoom, rsiOn]);
 
   const hv = useMemo(() => {
     if (!model || hover === null) return null;
@@ -346,6 +400,23 @@ export default function FlowChart({
                 <line key={t.y} className={styles.grid} x1="0" x2={w} y1={t.y} y2={t.y} />
               ))}
 
+              {model.rsi ? (
+                <g>
+                  <rect className={styles.rsiZone} x={0} width={w} y={model.rsi.y(100)} height={model.rsi.y(70) - model.rsi.y(100)} />
+                  <rect className={styles.rsiZone} x={0} width={w} y={model.rsi.y(30)} height={model.rsi.y(0) - model.rsi.y(30)} />
+                  {[70, 30].map((v) => (
+                    <g key={v}>
+                      <line className={styles.rsiGuide} x1={0} x2={w - TAG_W - 8} y1={model.rsi!.y(v)} y2={model.rsi!.y(v)} />
+                      <text className={styles.tick} x={w - 8} y={model.rsi!.y(v) + 3} textAnchor="end">{v}</text>
+                    </g>
+                  ))}
+                  <text className={styles.rsiLabel} x={14} y={model.rsi.top - 3}>
+                    {t("rsi.label", { n: RSI_N, candle: model.rsi.candle >= 60 ? t("range.m", { n: model.rsi.candle / 60 }) : t("rsi.sec", { n: model.rsi.candle }) })}
+                    {model.rsi.last !== null ? ` ${model.rsi.last.toFixed(1)}` : ` ${t("rsi.warming")}`}
+                  </text>
+                </g>
+              ) : null}
+
               <g className={styles.slide} style={{ transform: `translateX(${model.shift.toFixed(1)}px)` }}>
                 {/* clipped to the plot so a zoomed-in line does not run into the overlays */}
                 <clipPath id={`c${gid}`}>
@@ -355,6 +426,7 @@ export default function FlowChart({
                 <path d={model.area} fill={`url(#g${gid})`} />
                 <path className={styles.line} d={model.line} />
                 </g>
+                {model.rsi ? <path className={styles.rsiLine} d={model.rsi.path} /> : null}
                 {model.beads.map((b) => (
                   <circle
                     key={b.key}
@@ -484,12 +556,13 @@ export default function FlowChart({
         )}
       </div>
       {zoomable ? (
-        <div className={styles.zoom} onPointerMove={(e) => e.stopPropagation()}>
+        <div className={styles.zoom} style={model?.rsi ? { bottom: 80 + model.rsi.h + 12 } : undefined} onPointerMove={(e) => e.stopPropagation()}>
           {RANGES.map((r) => (
             <button key={r} type="button" className={r === windowSec ? styles.rangeOn : styles.range} aria-pressed={r === windowSec} onClick={() => pickRange(r)}>
               {r >= 3600 ? t("range.h", { n: r / 3600 }) : t("range.m", { n: r / 60 })}
             </button>
           ))}
+          <button type="button" className={`${rsiOn ? styles.rangeOn : styles.range} ${styles.zoomGapBtn}`} aria-pressed={rsiOn} onClick={toggleRsi}>RSI</button>
           <span className={styles.zoomGap}>{t("zoom.y")}</span>
           <button type="button" onClick={() => zoomY(1 / 1.25)} aria-label="zoom out price">-</button>
           <button type="button" onClick={() => zoomY(1.25)} aria-label="zoom in price">+</button>
