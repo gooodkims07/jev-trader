@@ -93,6 +93,27 @@ export default function SpikeStatus({ snap, apiUrl }: { snap: SpikeSnapshot | nu
   const observing = pending ?? serverObserve;
   const plan = snap?.plan;
   const jev = snap?.open.find((o) => o.who === "jev") ?? null;
+
+  // The open position keeps the exits it opened with; this moves them to the current settings (POST /spike/exits).
+  const [exitsMsg, setExitsMsg] = useState<string | null>(null);
+  const [applying, setApplying] = useState(false);
+  const want = jev && plan ? { tp: jev.entry * (1 + ((jev.side === "buy" ? 1 : -1) * plan.takeProfitPct) / 100), sl: jev.entry * (1 - ((jev.side === "buy" ? 1 : -1) * plan.stopLossPct) / 100) } : null;
+  const stale = !!want && !!jev && (Math.abs(want.tp / jev.tp - 1) > 1e-6 || Math.abs(want.sl / jev.sl - 1) > 1e-6);
+  const applyExits = async () => {
+    let token = "";
+    try { token = localStorage.getItem("jev.adminToken") ?? ""; } catch { /* no storage */ }
+    if (!token) { setExitsMsg(t("spike.resetNoToken")); setTimeout(() => setExitsMsg(null), 4000); return; }
+    setApplying(true);
+    try {
+      const r = await fetch(`${apiUrl.replace(/\/+$/, "")}/spike/exits`, { method: "POST", headers: { authorization: `Bearer ${token}` } });
+      const body = await r.json();
+      setExitsMsg(r.ok ? t(body.onExchange ? "exits.done" : "exits.doneWatched", { tp: venue.fmtMid(body.tp), sl: venue.fmtMid(body.sl) }) : r.status === 401 ? t("settings.unauthorized") : t("exits.failed"));
+    } catch {
+      setExitsMsg(t("exits.failed"));
+    }
+    setApplying(false);
+    setTimeout(() => setExitsMsg(null), 5000);
+  };
   const px = (n: number) => n.toFixed(venue.priceDecimals);
   return (
     <>
@@ -139,6 +160,17 @@ export default function SpikeStatus({ snap, apiUrl }: { snap: SpikeSnapshot | nu
               </span>
             </div>
             <ExitBar jev={jev} px={px} t={t} />
+            {stale || exitsMsg ? (
+              <div className={styles.exitsRow}>
+                {stale && want ? (
+                  <>
+                    <span>{t("exits.stale", { tp: px(want.tp), sl: px(want.sl) })}</span>
+                    <button type="button" className={styles.miniButton} disabled={applying} onClick={applyExits}>{t("exits.apply")}</button>
+                  </>
+                ) : null}
+                {exitsMsg ? <span className={styles.labelNote}>{exitsMsg}</span> : null}
+              </div>
+            ) : null}
             <div className={styles.timeLeft}>
               {t("spike.timeLeft")} <b>{plan ? t("spike.min", { n: Math.max(0, Math.round(plan.maxHoldMin - jev.heldMin)) }) : "-"}</b>
               {jev.mfePct != null && jev.maePct != null ? (

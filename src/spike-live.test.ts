@@ -277,6 +277,23 @@ test("excursions: the share of trades that reached each move, the plan's exits a
   reset();
 });
 
+test("applyExits: the open position takes the current take-profit and stop, on the exchange too", async () => {
+  try {
+    config.tradeSize = 5; config.okx.leverage = 5; config.risk.sessionStopLoss = 0;
+    const f = liveVenue();
+    const t = new SpikeTrader(f.v, says("buy"), () => {});
+    expect(await t.applyExits()).toBeNull(); // flat
+    await openLong(t, f, 15000);
+    const entry = t.snapshot().open.find((o) => o.who === "jev")!.entry;
+    config.spike.takeProfitRoePct = 5; config.spike.stopLossRoePct = 5; // +-1% at 5x
+    const r = await t.applyExits();
+    expect(r).toMatchObject({ onExchange: true });
+    expect(r!.tp).toBeCloseTo(entry * 1.01, 9);
+    expect(f.ex.exits.at(-1)).toEqual({ side: "buy", tp: r!.tp, sl: r!.sl });
+    expect(t.snapshot().open.find((o) => o.who === "jev")!.sl).toBeCloseTo(entry * 0.99, 9);
+  } finally { reset(); }
+});
+
 test("live and dry-run records are kept apart: each mode loads only its own", async () => {
   const f = liveVenue();
   const live = new SpikeTrader(f.v, says("hold"), () => {});

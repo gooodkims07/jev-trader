@@ -446,3 +446,14 @@
   text-decoration: underline;
   text-underline-offset: 3px;
 }
+
+/* the open position's exits differ from the settings: offer to move them */
+.exitsRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 2px;
+  font-size: 12px;
+  color: var(--muted);
+}

@@ -23,6 +23,14 @@ export async function runSpike(venue: Venue) {
         if (!tokenOk(req)) return { status: 401, body: { error: "wrong or missing admin token" } };
         return { status: 200, body: { reference: trader.resetReference() } };
       },
+      // POST with the admin token: move Jev's open position to the take-profit and stop of the current settings.
+      "/spike/exits": async (req) => {
+        if (req.method !== "POST") return { status: 405, body: { error: "POST" } };
+        if (!config.adminToken) return { status: 403, body: { error: "read-only: start the server with ADMIN_TOKEN" } };
+        if (!tokenOk(req)) return { status: 401, body: { error: "wrong or missing admin token" } };
+        const r = await trader.applyExits();
+        return r ? { status: 200, body: r } : { status: 409, body: { error: "no open position" } };
+      },
     },
   );
   let lastBeat = 0;

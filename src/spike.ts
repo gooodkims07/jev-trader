@@ -455,6 +455,27 @@ export class SpikeTrader {
   }
 
   /**
+   * Move Jev's open position to the take-profit and stop of the current settings (from its entry), and replace
+   * its exits on the exchange when live. Waits for the tick in progress, so no order races it. Null when flat.
+   */
+  async applyExits(): Promise<{ tp: number; sl: number; onExchange: boolean } | null> {
+    while (this.busy) await Bun.sleep(25);
+    this.busy = true;
+    try {
+      const o = this.open.get("jev");
+      if (!o) return null;
+      const dir = o.side === "buy" ? 1 : -1;
+      o.tp = o.entry * (1 + (dir * this.tpPct) / 100);
+      o.sl = o.entry * (1 - (dir * this.slPct) / 100);
+      if (this.exec) o.exitsOnExchange = await this.exec.setExits({ side: o.side, tp: o.tp, sl: o.sl });
+      console.log(`spike: exits of the open ${o.side === "buy" ? "long" : "short"} moved to take-profit ${o.tp} / stop ${o.sl}`);
+      return { tp: o.tp, sl: o.sl, onExchange: !!o.exitsOnExchange };
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  /**
    * Take the current mid as the reference for both windows: moves already made are ignored and the next spike
    * is measured from here. Detection goes on at once (no waiting for history); real samples take over as they
    * age past each window. Returns the reference price.
