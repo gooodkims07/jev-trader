@@ -87,7 +87,8 @@ test("snapshot: plan, gauge, open positions, Jev vs rules, and the spike list fo
   expect(s.gauge.cooldownSec).toBeGreaterThan(0);
   expect(s.open.map((o) => `${o.who}:${o.side}`).sort()).toEqual(["fade:buy", "follow:sell", "jev:buy"]);
   expect(s.spikes[0]).toMatchObject({ block: b - 1, direction: "down", jevOpen: true, trade: null });
-  expect(Object.keys(s.stats).sort()).toEqual(["fade", "follow", "jev"]);
+  expect(Object.keys(s.stats).sort()).toEqual(["fade", "follow", "jev", "manual"]);
+  expect(s.open.find((o) => o.who === "jev")).toMatchObject({ mfePct: null, maePct: null, manual: false }); // opened this tick: no move measured yet
   expect(Array.isArray(s.curve)).toBe(true);
 });
 

@@ -429,3 +429,20 @@
   color: var(--ink-2);
   font-size: 12px;
 }
+
+/* ---- how far trades went ---- */
+.reachTable th,
+.reachTable td {
+  text-align: right;
+}
+
+.reachTable th:first-child,
+.reachTable td:first-child {
+  text-align: left;
+}
+
+.reachTable .reachMark {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}

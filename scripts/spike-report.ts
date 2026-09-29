@@ -10,7 +10,10 @@ const rows = readFileSync(file, "utf8").trim().split("\n").filter(Boolean).map((
   .filter((r) => (r.live ?? false) === wantLive && (!coin || (r.instId ?? "XRP-USDT-SWAP") === coin));
 console.log(`${wantLive ? "LIVE" : "DRY RUN"} records${coin ? ` for ${coin}` : ""}`);
 const spikes = rows.filter((r) => r.type === "spike");
-const trades = rows.filter((r) => r.type === "trade");
+// Jev's rows that are not Jev's trades (taken over from the OKX app, or closed by hand) are reported apart.
+const isManual = (r: any) => r.who === "jev" && (r.manual ?? (r.spikeBlock === -1 || r.reason === "manual"));
+const manual = rows.filter((r) => r.type === "trade" && isManual(r));
+const trades = rows.filter((r) => r.type === "trade" && !isManual(r));
 if (!spikes.length) { console.log("no spikes yet"); process.exit(0); }
 
 const hours = (spikes.at(-1).ts - spikes[0].ts) / 3.6e6;
@@ -34,6 +37,7 @@ const jev = trades.filter((t) => t.who === "jev");
 line("jev", jev);
 line("  jev fading", jev.filter((t) => style(t) === "fade"));
 line("  jev following", jev.filter((t) => style(t) === "follow"));
+line("manual", manual);
 line("rule: fade", trades.filter((t) => t.who === "fade"));
 line("rule: follow", trades.filter((t) => t.who === "follow"));
 
@@ -41,3 +45,15 @@ line("rule: follow", trades.filter((t) => t.who === "follow"));
 const skipped = new Set(asked.filter((s) => s.jev?.action === "hold").map((s) => s.block));
 line("fade, Jev out", trades.filter((t) => t.who === "fade" && skipped.has(t.spikeBlock)));
 line("follow, Jev out", trades.filter((t) => t.who === "follow" && skipped.has(t.spikeBlock)));
+
+// How far each strategy's trades went before they closed (price %, + in the trade's favour): the share that
+// reached each move, to set the take-profit and stop from. Rows from before this was recorded are skipped.
+const LEVELS = [0.5, 1, 1.5, 2, 3, 4];
+console.log("how far trades went before the close (price move reached: in favour / against):");
+for (const who of ["jev", "fade", "follow"]) {
+  const m = trades.filter((t) => t.who === who && t.mfePct !== undefined);
+  if (!m.length) { console.log(`  ${who.padEnd(8)} not measured yet`); continue; }
+  const avg = (k: string) => (m.reduce((a, t) => a + t[k], 0) / m.length).toFixed(2);
+  const cells = LEVELS.map((p) => `${p}%: ${Math.round((m.filter((t) => t.mfePct >= p).length / m.length) * 100)}/${Math.round((m.filter((t) => t.maePct <= -p).length / m.length) * 100)}`);
+  console.log(`  ${who.padEnd(8)} ${m.length} trades · avg best +${avg("mfePct")}% worst ${avg("maePct")}% · ${cells.join("  ")}`);
+}

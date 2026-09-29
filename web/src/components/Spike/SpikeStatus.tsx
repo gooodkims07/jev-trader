@@ -132,6 +132,7 @@ export default function SpikeStatus({ snap, apiUrl }: { snap: SpikeSnapshot | nu
               <span className={styles.posWord} style={{ color: jev.side === "buy" ? "var(--buy-ink)" : "var(--sell-ink)" }}>
                 {t(jev.side === "buy" ? "spike.long" : "spike.short")} {jev.size ?? plan?.size} {plan?.base}
                 {jev.adds ? <span className={styles.labelNote} style={{ fontSize: 12, marginLeft: 8 }}>{t("spike.adds", { n: jev.adds })}</span> : null}
+                {jev.manual ? <span className={styles.labelNote} style={{ fontSize: 12, marginLeft: 8, color: "var(--muted)" }}>{t("spike.manualTag")}</span> : null}
               </span>
               <span className={`${styles.posRoe} ${jev.unrealizedRoePct >= 0 ? styles.pos : styles.neg}`}>
                 ROE {sign(jev.unrealizedRoePct, 1)}%{jev.unrealizedUsd !== undefined ? ` (${sign(jev.unrealizedUsd, 3)} USDT)` : ""}
@@ -140,6 +141,12 @@ export default function SpikeStatus({ snap, apiUrl }: { snap: SpikeSnapshot | nu
             <ExitBar jev={jev} px={px} t={t} />
             <div className={styles.timeLeft}>
               {t("spike.timeLeft")} <b>{plan ? t("spike.min", { n: Math.max(0, Math.round(plan.maxHoldMin - jev.heldMin)) }) : "-"}</b>
+              {jev.mfePct != null && jev.maePct != null ? (
+                <span style={{ marginLeft: 14 }}>
+                  {t("spike.best")} <b className={styles.pos}>{sign(jev.mfePct, 2)}%</b>
+                  <span style={{ marginLeft: 10 }}>{t("spike.worst")} <b className={styles.neg}>{sign(jev.maePct, 2)}%</b></span>
+                </span>
+              ) : null}
             </div>
           </>
         ) : (

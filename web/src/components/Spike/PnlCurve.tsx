@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { SpikeSnapshot } from "@/lib/types";
-import { WHO } from "./SpikeCompare";
+import { MANUAL_COLOUR, WHO } from "./SpikeCompare";
 import { useLang } from "@/lib/i18n";
 import styles from "./Spike.module.css";
 
@@ -20,12 +20,14 @@ export default function PnlCurve({ snap }: { snap: SpikeSnapshot | null }) {
   }, []);
 
   const pts = snap?.curve ?? [];
-  const all = pts.flatMap((p) => [p.jev, p.fade, p.follow]);
+  // Manual trades (taken over, closed by hand) get their own dashed line once there are any.
+  const hasManual = pts.some((p) => (p.manual ?? 0) !== 0);
+  const all = pts.flatMap((p) => [p.jev, p.fade, p.follow, p.manual ?? 0]);
   const lo = Math.min(0, ...all), hi = Math.max(0, ...all), range = hi - lo || 1;
   const { w, h } = size, pad = 4;
   const x = (i: number) => (pts.length < 2 ? w / 2 : pad + (i / (pts.length - 1)) * (w - 2 * pad));
   const y = (v: number) => pad + (1 - (v - lo) / range) * (h - 2 * pad);
-  const path = (k: "jev" | "fade" | "follow") => pts.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)} ${y(p[k]).toFixed(1)}`).join(" ");
+  const path = (k: "jev" | "fade" | "follow" | "manual") => pts.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)} ${y(p[k] ?? 0).toFixed(1)}`).join(" ");
   const last = pts.at(-1);
 
   return (
@@ -39,6 +41,12 @@ export default function PnlCurve({ snap }: { snap: SpikeSnapshot | null }) {
               {t(name)} {last ? `${last[who] >= 0 ? "+" : ""}${last[who].toFixed(3)}` : "0"}
             </span>
           ))}
+          {hasManual && last ? (
+            <span>
+              <span className={styles.swatch} style={{ background: MANUAL_COLOUR }} />
+              {t("spike.who.manual")} {`${(last.manual ?? 0) >= 0 ? "+" : ""}${(last.manual ?? 0).toFixed(3)}`}
+            </span>
+          ) : null}
         </span>
       </div>
       <div ref={ref} style={{ flex: 1, minHeight: 0 }}>
@@ -50,6 +58,7 @@ export default function PnlCurve({ snap }: { snap: SpikeSnapshot | null }) {
             {WHO.map(({ who, colour }) => (
               <path key={who} d={path(who)} fill="none" stroke={colour} strokeWidth={who === "jev" ? 2 : 1.4} opacity={who === "jev" ? 1 : 0.8} />
             ))}
+            {hasManual ? <path d={path("manual")} fill="none" stroke={MANUAL_COLOUR} strokeWidth={1.4} strokeDasharray="4 3" /> : null}
           </svg>
         )}
       </div>

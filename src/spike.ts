@@ -141,7 +141,11 @@ type Who = "jev" | "fade" | "follow";
  * when the first order filled, and exitsOnExchange says whether OKX holds the take-profit / stop OCO (else the
  * bot watches the levels itself).
  */
-interface Open { who: Who; side: Side; entry: number; size: number; adds: number; openedAt: number; spikeBlock: number; tp: number; sl: number; openedTs?: number; exitsOnExchange?: boolean; entryFees?: number }
+/**
+ * mfe / mae: the best and worst the position stood while open, as a price move from its entry in % (+ in its
+ * favour), from the mid at each tick. manual: opened outside the bot (taken over) or added to by hand.
+ */
+interface Open { who: Who; side: Side; entry: number; size: number; adds: number; openedAt: number; spikeBlock: number; tp: number; sl: number; openedTs?: number; exitsOnExchange?: boolean; entryFees?: number; mfe?: number; mae?: number; manual?: boolean }
 /** What a spike did to one strategy's position. */
 type Effect = "open" | "add" | "reverse" | "hold" | "out" | "not-asked" | "observed";
 
@@ -149,7 +153,19 @@ const LOG = "data/spike.jsonl";
 /** A row of data/spike.jsonl. */
 /** live: recorded by a live run (absent on rows from before this was recorded: those were all dry runs). */
 interface SpikeRow { type: "spike"; instId?: string; live?: boolean; block: number; ts: number; window: string; direction: "up" | "down"; movePct: number; mid: number; asked: boolean; effect?: Effect; jev: { action: Action; probabilities: Record<Action, number>; latencyMs: number } | null }
-interface TradeRow { type: "trade"; instId?: string; live?: boolean; who: Who; side: Side; spikeBlock: number; openedAt: number; closedAt: number; heldMin: number; entry: number; exit: number; size?: number; adds?: number; reason: string; pnlPct: number; roePct: number; pnlUsd: number; ts?: number }
+/**
+ * manual: Jev's row, but not Jev's trade (taken over from the OKX app, added to or closed by hand). mfePct /
+ * maePct: see Open (absent on rows from before they were recorded).
+ */
+interface TradeRow { type: "trade"; instId?: string; live?: boolean; who: Who; side: Side; spikeBlock: number; openedAt: number; closedAt: number; heldMin: number; entry: number; exit: number; size?: number; adds?: number; reason: string; pnlPct: number; roePct: number; pnlUsd: number; ts?: number; manual?: boolean; mfePct?: number; maePct?: number }
+
+/** Rows from before `manual` was recorded: taken over (no spike) or closed by hand. */
+const isManual = (r: TradeRow) => r.who === "jev" && (r.manual ?? (r.spikeBlock === -1 || r.reason === "manual"));
+/** Price moves (%) the excursion table reports, besides the plan's own take-profit and stop. */
+const REACH_LEVELS = [0.5, 1, 1.5, 2, 3, 4];
+type Stat = { trades: number; wins: number; avgPct: number; totalUsd: number; tp: number; sl: number; time: number };
+/** How far trades went before they closed: averages, and the share that reached each price move either way. */
+type Excursion = { measured: number; mfeAvg: number; maeAvg: number; reach: { pct: number; fav: number; adv: number }[] };
 
 /** What the dashboard's spike panels read from GET /spike. */
 export interface SpikeSnapshot {
@@ -157,12 +173,14 @@ export interface SpikeSnapshot {
   /** The mid's move now vs 1 and 3 minutes ago, in %, or null while history fills. */
   /** Long or short only: `extreme` is the high (long only) or low (short only) the next spike is measured from, and r1Pct the move from it. */
   gauge: { r1Pct: number | null; r3Pct: number | null; cooldownSec: number; extreme?: { kind: "high" | "low"; price: number } | null };
-  open: { who: Who; side: Side; entry: number; size: number; adds: number; tp: number; sl: number; heldMin: number; unrealizedPct: number; unrealizedRoePct: number; unrealizedUsd: number }[];
-  stats: Record<Who, { trades: number; wins: number; avgPct: number; totalUsd: number; tp: number; sl: number; time: number }>;
+  open: { who: Who; side: Side; entry: number; size: number; adds: number; tp: number; sl: number; heldMin: number; unrealizedPct: number; unrealizedRoePct: number; unrealizedUsd: number; mfePct: number | null; maePct: number | null; manual: boolean }[];
+  /** jev: Jev's own trades only; manual: the ones taken over or closed by hand (see isManual). */
+  stats: Record<Who | "manual", Stat>;
+  excursions: Record<Who, Excursion>;
   /** Newest first; `trade` is Jev's closed trade from that spike, if any. */
   spikes: (SpikeRow & { trade: Pick<TradeRow, "side" | "reason" | "pnlPct" | "roePct" | "pnlUsd"> | null; jevOpen: boolean })[];
   /** Cumulative USDT per strategy after each closed trade, oldest first. */
-  curve: { ts: number; jev: number; fade: number; follow: number }[];
+  curve: { ts: number; jev: number; fade: number; follow: number; manual: number }[];
 }
 
 export class SpikeTrader {
@@ -214,18 +232,29 @@ export class SpikeTrader {
   snapshot(): SpikeSnapshot {
     const mid = this.lastMid, now = this.lastBlock; // blocks are seconds
     const r = (sec: number) => { const then = this.midAgo(sec); return then && mid ? round((mid / then - 1) * 100, 3) : null; };
-    const stats = {} as SpikeSnapshot["stats"];
-    for (const who of ["jev", "fade", "follow"] as Who[]) {
-      const ts = this.tradeRows.filter((x) => x.who === who);
+    const stat = (ts: TradeRow[]): Stat => {
       const by = (reason: string) => ts.filter((x) => x.reason === reason).length;
-      stats[who] = { trades: ts.length, wins: ts.filter((x) => x.pnlPct > 0).length, avgPct: ts.length ? round(ts.reduce((a, x) => a + x.pnlPct, 0) / ts.length, 4) : 0, totalUsd: round(ts.reduce((a, x) => a + x.pnlUsd, 0), 5), tp: by("take-profit"), sl: by("stop-loss"), time: by("time") };
-    }
+      return { trades: ts.length, wins: ts.filter((x) => x.pnlPct > 0).length, avgPct: ts.length ? round(ts.reduce((a, x) => a + x.pnlPct, 0) / ts.length, 4) : 0, totalUsd: round(ts.reduce((a, x) => a + x.pnlUsd, 0), 5), tp: by("take-profit"), sl: by("stop-loss"), time: by("time") };
+    };
+    const rowsOf = (who: Who) => this.tradeRows.filter((x) => x.who === who && !isManual(x));
+    const stats = { jev: stat(rowsOf("jev")), fade: stat(rowsOf("fade")), follow: stat(rowsOf("follow")), manual: stat(this.tradeRows.filter(isManual)) };
+    // The plan's own exits join the levels, so the table says how often they would have been reached.
+    const levels = [...new Set([...REACH_LEVELS, round(this.tpPct, 2), round(this.slPct, 2)])].sort((a, b) => a - b);
+    const excursion = (ts: TradeRow[]): Excursion => {
+      const m = ts.filter((x) => x.mfePct !== undefined && x.maePct !== undefined);
+      const avg = (f: (x: TradeRow) => number) => (m.length ? round(m.reduce((a, x) => a + f(x), 0) / m.length, 3) : 0);
+      return {
+        measured: m.length, mfeAvg: avg((x) => x.mfePct!), maeAvg: avg((x) => x.maePct!),
+        reach: levels.map((pct) => ({ pct, fav: m.filter((x) => x.mfePct! >= pct).length, adv: m.filter((x) => x.maePct! <= -pct).length })),
+      };
+    };
+    const excursions = { jev: excursion(rowsOf("jev")), fade: excursion(rowsOf("fade")), follow: excursion(rowsOf("follow")) };
     const jevBySpike = new Map(this.tradeRows.filter((x) => x.who === "jev").map((x) => [x.spikeBlock, x]));
     const jevOpen = this.open.get("jev");
-    const cum = { jev: 0, fade: 0, follow: 0 };
+    const cum = { jev: 0, fade: 0, follow: 0, manual: 0 };
     const curve = [...this.tradeRows].sort((a, b) => a.closedAt - b.closedAt).map((x) => {
-      cum[x.who] += x.pnlUsd;
-      return { ts: x.ts ?? x.closedAt * 1000, jev: round(cum.jev, 5), fade: round(cum.fade, 5), follow: round(cum.follow, 5) };
+      cum[isManual(x) ? "manual" : x.who] += x.pnlUsd;
+      return { ts: x.ts ?? x.closedAt * 1000, jev: round(cum.jev, 5), fade: round(cum.fade, 5), follow: round(cum.follow, 5), manual: round(cum.manual, 5) };
     });
     return {
       plan: { live: this.venue.live, observe: this.venue.live && !!config.spike.observe, sides: config.spike.sides === 1 ? "long" : config.spike.sides === 2 ? "short" : "both", maxAdds: config.spike.maxAdds, allowReverse: !!config.spike.allowReverse, move1mPct: config.spike.move1mPct, move3mPct: config.spike.move3mPct, window1Sec: config.spike.window1Sec, window2Sec: config.spike.window2Sec, takeProfitRoePct: config.spike.takeProfitRoePct, stopLossRoePct: config.spike.stopLossRoePct, takeProfitPct: this.tpPct, stopLossPct: this.slPct, leverage: config.okx.leverage, maxHoldMin: config.spike.maxHoldMin, size: config.tradeSize, base: this.venue.info.base },
@@ -234,9 +263,10 @@ export class SpikeTrader {
         : { r1Pct: r(config.spike.window1Sec), r3Pct: r(config.spike.window2Sec), cooldownSec: Math.max(0, this.cooldownUntil - now), extreme: null },
       open: [...this.open.values()].map((o) => {
         const dir = o.side === "buy" ? 1 : -1, u = mid ? dir * (mid / o.entry - 1) * 100 : 0;
-        return { who: o.who, side: o.side, entry: o.entry, size: o.size, adds: o.adds, tp: o.tp, sl: o.sl, heldMin: round((now - o.openedAt) / 60, 1), unrealizedPct: round(u, 3), unrealizedRoePct: round(u * config.okx.leverage, 2), unrealizedUsd: round(mid ? dir * (mid - o.entry) * o.size : 0, 4) };
+        return { who: o.who, side: o.side, entry: o.entry, size: o.size, adds: o.adds, tp: o.tp, sl: o.sl, heldMin: round((now - o.openedAt) / 60, 1), unrealizedPct: round(u, 3), unrealizedRoePct: round(u * config.okx.leverage, 2), unrealizedUsd: round(mid ? dir * (mid - o.entry) * o.size : 0, 4), mfePct: o.mfe === undefined ? null : round(o.mfe, 3), maePct: o.mae === undefined ? null : round(o.mae, 3), manual: !!o.manual };
       }),
       stats,
+      excursions,
       spikes: this.spikeRows.slice(-50).reverse().map((s) => {
         const tr = jevBySpike.get(s.block);
         return { ...s, trade: tr ? { side: tr.side, reason: tr.reason, pnlPct: tr.pnlPct, roePct: tr.roePct, pnlUsd: tr.pnlUsd } : null, jevOpen: !!jevOpen && jevOpen.spikeBlock === s.block };
@@ -266,6 +296,7 @@ export class SpikeTrader {
       const keep = Math.max(config.spike.window1Sec, config.spike.window2Sec, 300) + 60;
       while (this.hist.length && this.hist[0]!.b < block - keep) this.hist.shift();
       let quote: Quote | null = null, fill: Fill | null = null, decision: Decision | null = null, note = "";
+      for (const o of this.open.values()) this.excursion(o, book.mid);
 
       // Live: match the exchange first (exits that fired there, trades made in the OKX app).
       if (this.exec) {
@@ -537,6 +568,7 @@ export class SpikeTrader {
       const dir = o.side === "buy" ? 1 : -1;
       o.size = Math.abs(pos.size);
       o.entry = pos.avgPx || o.entry;
+      o.manual = true; // part of it is no longer Jev's
       o.entryFees = (o.entryFees ?? 0) + f.fee;
       o.tp = o.entry * (1 + (dir * this.tpPct) / 100);
       o.sl = o.entry * (1 - (dir * this.slPct) / 100);
@@ -574,7 +606,7 @@ export class SpikeTrader {
     const fee = config.spike.takerFeeRate * entry * size;
     // Adds counted as if it was built from orders of the current size: 40 at 10 a time is 1 + 3 adds.
     const adds = Math.max(0, Math.round(size / config.tradeSize) - 1);
-    const n: Open = { who: "jev", side, entry, size, adds, openedAt: block, spikeBlock: -1, openedTs: Date.now() - 1000, entryFees: fee, tp: entry * (1 + (dir * this.tpPct) / 100), sl: entry * (1 - (dir * this.slPct) / 100) };
+    const n: Open = { who: "jev", side, entry, size, adds, openedAt: block, spikeBlock: -1, openedTs: Date.now() - 1000, entryFees: fee, manual: true, tp: entry * (1 + (dir * this.tpPct) / 100), sl: entry * (1 - (dir * this.slPct) / 100) };
     this.open.set("jev", n);
     this.feesUsd += fee; this.realized -= fee;
     n.exitsOnExchange = await exec.setExits({ side, tp: n.tp, sl: n.sl });
@@ -603,6 +635,18 @@ export class SpikeTrader {
     return { px: px / qty, fee };
   }
 
+  /** Update the position's best and worst move from its entry (price %, + in its favour) with the mid now. */
+  private excursion(o: Open, mid: number) {
+    const move = (o.side === "buy" ? 1 : -1) * (mid / o.entry - 1) * 100;
+    o.mfe = Math.max(o.mfe ?? move, move);
+    o.mae = Math.min(o.mae ?? move, move);
+  }
+
+  /** The row fields for how far the position went, rounded; none if it never saw a tick. */
+  private excursionFields(o: Open) {
+    return o.mfe === undefined || o.mae === undefined ? {} : { mfePct: round(o.mfe, 3), maePct: round(o.mae, 3) };
+  }
+
   /** Book a closed Jev position at `exit` with the exit fee: the trade row, realized P&L and fees. */
   private record(o: Open, exit: number, exitFee: number, reason: string, block: number, alreadyRemoved = false) {
     if (!alreadyRemoved) this.open.delete(o.who);
@@ -612,7 +656,7 @@ export class SpikeTrader {
     const pnlUsd = gross - exitFee - entryFees;
     const pnlPct = (pnlUsd / (o.entry * o.size)) * 100;
     this.closed[o.who]++;
-    const row: TradeRow = { type: "trade", instId: this.venue.info.market, live: this.venue.live, who: o.who, side: o.side, spikeBlock: o.spikeBlock, openedAt: o.openedAt, closedAt: block, heldMin: round((block - o.openedAt) / 60, 1), entry: o.entry, exit, size: o.size, adds: o.adds, reason, pnlPct: round(pnlPct, 4), roePct: round(pnlPct * config.okx.leverage, 2), pnlUsd: round(pnlUsd, 5), ts: Date.now() };
+    const row: TradeRow = { type: "trade", instId: this.venue.info.market, live: this.venue.live, who: o.who, side: o.side, spikeBlock: o.spikeBlock, openedAt: o.openedAt, closedAt: block, heldMin: round((block - o.openedAt) / 60, 1), entry: o.entry, exit, size: o.size, adds: o.adds, reason, pnlPct: round(pnlPct, 4), roePct: round(pnlPct * config.okx.leverage, 2), pnlUsd: round(pnlUsd, 5), ts: Date.now(), ...this.excursionFields(o), ...(o.who === "jev" ? { manual: !!o.manual || reason === "manual" } : {}) };
     this.tradeRows.push(row);
     this.log(row);
     this.feesUsd += exitFee;
@@ -750,7 +794,7 @@ export class SpikeTrader {
     const pnlUsd = dir * (exit - o.entry) * o.size - fees;
     const pnlPct = (pnlUsd / (o.entry * o.size)) * 100; // on notional, fees included
     this.closed[o.who]++;
-    const row: TradeRow = { type: "trade", instId: this.venue.info.market, live: this.venue.live, who: o.who, side: o.side, spikeBlock: o.spikeBlock, openedAt: o.openedAt, closedAt: block, heldMin: round((block - o.openedAt) / 60, 1), entry: o.entry, exit, size: o.size, adds: o.adds, reason, pnlPct: round(pnlPct, 4), roePct: round(pnlPct * config.okx.leverage, 2), pnlUsd: round(pnlUsd, 5), ts: Date.now() };
+    const row: TradeRow = { type: "trade", instId: this.venue.info.market, live: this.venue.live, who: o.who, side: o.side, spikeBlock: o.spikeBlock, openedAt: o.openedAt, closedAt: block, heldMin: round((block - o.openedAt) / 60, 1), entry: o.entry, exit, size: o.size, adds: o.adds, reason, pnlPct: round(pnlPct, 4), roePct: round(pnlPct * config.okx.leverage, 2), pnlUsd: round(pnlUsd, 5), ts: Date.now(), ...this.excursionFields(o) };
     this.tradeRows.push(row);
     this.log(row);
     if (o.who !== "jev") return { quote: null, fill: null, pnlPct };

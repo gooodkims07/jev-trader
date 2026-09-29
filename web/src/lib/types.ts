@@ -23,14 +23,18 @@ export interface SpikeRow {
   /** What the spike did to Jev's position: open, add, reverse, hold (kept), out (stayed out), not-asked, observed (live, observe mode: nothing sent). */
   effect?: "open" | "add" | "reverse" | "hold" | "out" | "not-asked" | "observed";
 }
+export interface SpikeStat { trades: number; wins: number; avgPct: number; totalUsd: number; tp: number; sl: number; time: number }
 export interface SpikeSnapshot {
   /** live: real orders; observe: live but sending no new orders (absent on older servers). */
   plan: { live?: boolean; observe?: boolean; sides?: "both" | "long" | "short"; move1mPct: number; move3mPct: number; window1Sec?: number; window2Sec?: number; takeProfitRoePct: number; stopLossRoePct: number; takeProfitPct: number; stopLossPct: number; leverage: number; maxHoldMin: number; size: number; base: string };
   gauge: { r1Pct: number | null; r3Pct: number | null; cooldownSec: number; extreme?: { kind: "high" | "low"; price: number } | null };
-  open: { who: Who; side: Side; entry: number; size?: number; adds?: number; tp: number; sl: number; heldMin: number; unrealizedPct: number; unrealizedRoePct: number; unrealizedUsd?: number }[];
-  stats: Record<Who, { trades: number; wins: number; avgPct: number; totalUsd: number; tp: number; sl: number; time: number }>;
+  open: { who: Who; side: Side; entry: number; size?: number; adds?: number; tp: number; sl: number; heldMin: number; unrealizedPct: number; unrealizedRoePct: number; unrealizedUsd?: number; mfePct?: number | null; maePct?: number | null; manual?: boolean }[];
+  /** jev: Jev's own trades; manual: taken over from the OKX app or closed by hand (absent on older servers). */
+  stats: Record<Who, SpikeStat> & { manual?: SpikeStat };
+  /** How far closed trades went before they closed (price %, + in the trade's favour). Absent on older servers. */
+  excursions?: Record<Who, { measured: number; mfeAvg: number; maeAvg: number; reach: { pct: number; fav: number; adv: number }[] }>;
   spikes: SpikeRow[];
-  curve: { ts: number; jev: number; fade: number; follow: number }[];
+  curve: { ts: number; jev: number; fade: number; follow: number; manual?: number }[];
 }
 export type ConnectionState = "connecting" | "live" | "reconnecting";
 export interface FeedState { meta: Meta | null; events: BlockEvent[]; latest: BlockEvent | null; connection: ConnectionState; avgLatencyMs: number }

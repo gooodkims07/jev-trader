@@ -243,6 +243,40 @@ test("observe: spikes are found and Jev asked, but no order is sent; back to tra
   } finally { reset(); config.spike.observe = 0; }
 });
 
+test("stats: trades taken over or closed by hand count as manual, not Jev's; each trade records how far it went", async () => {
+  try {
+    config.tradeSize = 5; config.okx.leverage = 5; config.risk.sessionStopLoss = 0;
+    const f = liveVenue();
+    const t = new SpikeTrader(f.v, says("hold"), () => {});
+    const before = t.snapshot().stats;
+    // Taken over from the app, then closed there: one manual trade.
+    f.ex.pos = 5; f.ex.avg = 2;
+    let b = await settle(t, 14000);
+    f.setMid(2.02); await t.onBlock(b++); f.setMid(1.99); await t.onBlock(b++); f.setMid(2.01);
+    f.ex.pos = 0; f.ex.exitState = "gone";
+    f.ex.fills = [{ px: 2.01, size: 5, fee: 0.005, ts: Date.now(), id: "m1", ordId: "app9", side: "sell" } as never];
+    b = await settle(t, b);
+    const s = t.snapshot();
+    expect(s.stats.manual.trades).toBe(before.manual.trades + 1);
+    expect(s.stats.jev.trades).toBe(before.jev.trades);
+    expect(s.curve.at(-1)!.manual).toBeCloseTo(s.stats.manual.totalUsd, 4);
+    const row = lastJevTrade(14000);
+    expect(row).toMatchObject({ manual: true, reason: "manual" });
+    expect(row.mfePct).toBeCloseTo(1, 3); // 2 -> 2.02
+    expect(row.maePct).toBeCloseTo(-0.5, 3); // 2 -> 1.99
+  } finally { reset(); }
+});
+
+test("excursions: the share of trades that reached each move, the plan's exits among the levels", async () => {
+  config.tradeSize = 5; config.okx.leverage = 5;
+  const f = liveVenue();
+  const t = new SpikeTrader(f.v, says("hold"), () => {});
+  const e = t.snapshot().excursions.fade;
+  expect(e.reach.map((r) => r.pct)).toEqual(expect.arrayContaining([0.5, 1, 4, 6])); // 20% / 30% ROE at 5x: 4% and 6%
+  expect(e.reach.every((r) => r.fav <= e.measured && r.adv <= e.measured)).toBe(true);
+  reset();
+});
+
 test("live and dry-run records are kept apart: each mode loads only its own", async () => {
   const f = liveVenue();
   const live = new SpikeTrader(f.v, says("hold"), () => {});
