@@ -201,6 +201,8 @@ export interface Venue {
   checkSize?(size: number): string | null;
   /** Take these resting orders off the book without placing one (the model chose to skip). Resolves to the ids gone. */
   cancel?(ids: OrderId[]): Promise<OrderId[]>;
+  /** The last `minutes` completed 1-minute closes, oldest first (OKX: from its candles). Seeds the trend shadow at start. */
+  closes?(minutes: number): Promise<{ ts: number; close: number }[]>;
   /** Market facts the model sees beyond the book. OKX: the swap's current funding rate. */
   extras?(): { fundingRatePct: number | null };
   /** On SIGINT/SIGTERM: take our orders off the book. Optional; Kuru leaves the last order resting as before. */

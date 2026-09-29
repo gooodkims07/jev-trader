@@ -14,7 +14,7 @@ export interface VenueInfo { name: "kuru" | "okx"; label: string; market: string
 export interface Meta { model: string; wallet: string | null; dryRun: boolean; market: string; venue?: VenueInfo; startedAt: number; strategy?: "mm" | "spike" }
 
 /** GET /spike (STRATEGY=spike). See src/spike.ts SpikeSnapshot. */
-export type Who = "jev" | "fade" | "follow";
+export type Who = "jev" | "fade" | "follow" | "trend";
 export interface SpikeTrade { side: Side; reason: string; pnlPct: number; roePct: number; pnlUsd: number }
 export interface SpikeRow {
   block: number; ts: number; window: string; direction: "up" | "down"; movePct: number; mid: number; asked: boolean;
@@ -30,11 +30,14 @@ export interface SpikeSnapshot {
   gauge: { r1Pct: number | null; r3Pct: number | null; cooldownSec: number; extreme?: { kind: "high" | "low"; price: number } | null };
   open: { who: Who; side: Side; entry: number; size?: number; adds?: number; tp: number; sl: number; heldMin: number; unrealizedPct: number; unrealizedRoePct: number; unrealizedUsd?: number; mfePct?: number | null; maePct?: number | null; manual?: boolean }[];
   /** jev: Jev's own trades; manual: taken over from the OKX app or closed by hand (absent on older servers). */
-  stats: Record<Who, SpikeStat> & { manual?: SpikeStat };
+  /** trend is absent on servers from before the trend shadow. */
+  stats: Record<Exclude<Who, "trend">, SpikeStat> & { trend?: SpikeStat; manual?: SpikeStat };
   /** How far closed trades went before they closed (price %, + in the trade's favour). Absent on older servers. */
-  excursions?: Record<Who, { measured: number; mfeAvg: number; maeAvg: number; reach: { pct: number; fav: number; adv: number }[] }>;
+  excursions?: Record<Exclude<Who, "trend">, { measured: number; mfeAvg: number; maeAvg: number; reach: { pct: number; fav: number; adv: number }[] }>;
   spikes: SpikeRow[];
-  curve: { ts: number; jev: number; fade: number; follow: number; manual?: number }[];
+  curve: { ts: number; jev: number; fade: number; follow: number; trend?: number; manual?: number }[];
+  /** The trend shadow's channel and trailing stop (absent on older servers). */
+  trend?: { lookbackSec: number; trailPct: number; high: number | null; low: number | null; minutes: number; stop: number | null };
 }
 export type ConnectionState = "connecting" | "live" | "reconnecting";
 export interface FeedState { meta: Meta | null; events: BlockEvent[]; latest: BlockEvent | null; connection: ConnectionState; avgLatencyMs: number }

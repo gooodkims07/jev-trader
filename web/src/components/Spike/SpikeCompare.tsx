@@ -1,13 +1,15 @@
 "use client";
 
 import type { SpikeSnapshot, SpikeStat, Who } from "@/lib/types";
-import { useLang, type Key } from "@/lib/i18n";
+import { span, useLang, type Key } from "@/lib/i18n";
+import { useVenue } from "@/lib/venue";
 import styles from "./Spike.module.css";
 
 export const WHO: { who: Who; name: Key; colour: string }[] = [
   { who: "jev", name: "spike.who.jev", colour: "var(--link)" },
   { who: "fade", name: "spike.who.fade", colour: "var(--buy)" },
   { who: "follow", name: "spike.who.follow", colour: "var(--late)" },
+  { who: "trend", name: "spike.who.trend", colour: "var(--trend)" },
 ];
 
 /** Trades taken over from the OKX app or closed by hand: shown apart, so Jev's row is Jev's own. */
@@ -16,6 +18,7 @@ export const MANUAL_COLOUR = "var(--muted-2)";
 /** Jev against the two rules that shadow every spike with the same exits; manual trades apart; how far trades went. */
 export default function SpikeCompare({ snap }: { snap: SpikeSnapshot | null }) {
   const { t } = useLang();
+  const venue = useVenue();
   const row = (key: string, label: string, colour: string, s: SpikeStat | undefined) => {
     const n = s?.trades ?? 0;
     return (
@@ -44,11 +47,21 @@ export default function SpikeCompare({ snap }: { snap: SpikeSnapshot | null }) {
           <tr><th>{t("spike.col.strategy")}</th><th>{t("spike.col.trades")}</th><th>{t("spike.col.win")}</th><th>{t("spike.col.avg")}</th><th>{t("spike.col.exits")}</th><th>{t("spike.col.usdt")}</th></tr>
         </thead>
         <tbody>
-          {WHO.map(({ who, name, colour }) => row(who, t(name), colour, snap?.stats[who]))}
+          {WHO.map(({ who, name, colour }) => (who === "trend" && !snap?.stats.trend ? null : row(who, t(name), colour, snap?.stats[who as "jev"] ?? snap?.stats.trend)))}
           {manual && manual.trades ? row("manual", t("spike.who.manual"), MANUAL_COLOUR, manual) : null}
         </tbody>
       </table>
-      <div className={styles.note}>{t("spike.vsNote")}{manual && manual.trades ? ` ${t("spike.manualNote")}` : ""}</div>
+      <div className={styles.note}>{t("spike.vsNote")}{snap?.trend ? ` ${t("spike.trendNote", { lb: span(t, snap.trend.lookbackSec), trail: snap.trend.trailPct })}` : ""}{manual && manual.trades ? ` ${t("spike.manualNote")}` : ""}</div>
+      {snap?.trend ? (
+        <div className={styles.note}>
+          {(() => {
+            const tr = snap.trend, o = snap.open.find((x) => x.who === "trend");
+            if (o) return t("spike.trendIn", { side: t(o.side === "buy" ? "chart.long" : "chart.short"), entry: venue.fmtMid(o.entry), stop: tr.stop !== null ? venue.fmtMid(tr.stop) : "-" });
+            if (tr.high === null || tr.low === null) return t("spike.trendWarming", { n: tr.minutes, need: Math.round(tr.lookbackSec / 60) });
+            return t("spike.trendWaiting", { hi: venue.fmtMid(tr.high), lo: venue.fmtMid(tr.low) });
+          })()}
+        </div>
+      ) : null}
       {ex ? (
         <>
           <div className={styles.label} style={{ marginTop: 12 }}>

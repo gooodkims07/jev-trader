@@ -47,5 +47,6 @@ export async function runSpike(venue: Venue) {
   };
   for (const sig of ["SIGINT", "SIGTERM"] as const) process.on(sig, () => void stop(sig));
   trader.onHalt = (reason) => void stop(reason);
+  await trader.warmUp();
   venue.startClock((block) => trader.onBlock(block));
 }

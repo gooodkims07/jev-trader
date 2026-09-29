@@ -22,12 +22,12 @@ export default function PnlCurve({ snap }: { snap: SpikeSnapshot | null }) {
   const pts = snap?.curve ?? [];
   // Manual trades (taken over, closed by hand) get their own dashed line once there are any.
   const hasManual = pts.some((p) => (p.manual ?? 0) !== 0);
-  const all = pts.flatMap((p) => [p.jev, p.fade, p.follow, p.manual ?? 0]);
+  const all = pts.flatMap((p) => [p.jev, p.fade, p.follow, p.trend ?? 0, p.manual ?? 0]);
   const lo = Math.min(0, ...all), hi = Math.max(0, ...all), range = hi - lo || 1;
   const { w, h } = size, pad = 4;
   const x = (i: number) => (pts.length < 2 ? w / 2 : pad + (i / (pts.length - 1)) * (w - 2 * pad));
   const y = (v: number) => pad + (1 - (v - lo) / range) * (h - 2 * pad);
-  const path = (k: "jev" | "fade" | "follow" | "manual") => pts.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)} ${y(p[k] ?? 0).toFixed(1)}`).join(" ");
+  const path = (k: "jev" | "fade" | "follow" | "trend" | "manual") => pts.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)} ${y(p[k] ?? 0).toFixed(1)}`).join(" ");
   const last = pts.at(-1);
 
   return (
@@ -38,7 +38,7 @@ export default function PnlCurve({ snap }: { snap: SpikeSnapshot | null }) {
           {WHO.map(({ who, name, colour }) => (
             <span key={who}>
               <span className={styles.swatch} style={{ background: colour }} />
-              {t(name)} {last ? `${last[who] >= 0 ? "+" : ""}${last[who].toFixed(3)}` : "0"}
+              {t(name)} {last ? `${(last[who] ?? 0) >= 0 ? "+" : ""}${(last[who] ?? 0).toFixed(3)}` : "0"}
             </span>
           ))}
           {hasManual && last ? (

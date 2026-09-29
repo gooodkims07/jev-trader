@@ -87,7 +87,7 @@ test("snapshot: plan, gauge, open positions, Jev vs rules, and the spike list fo
   expect(s.gauge.cooldownSec).toBeGreaterThan(0);
   expect(s.open.map((o) => `${o.who}:${o.side}`).sort()).toEqual(["fade:buy", "follow:sell", "jev:buy"]);
   expect(s.spikes[0]).toMatchObject({ block: b - 1, direction: "down", jevOpen: true, trade: null });
-  expect(Object.keys(s.stats).sort()).toEqual(["fade", "follow", "jev", "manual"]);
+  expect(Object.keys(s.stats).sort()).toEqual(["fade", "follow", "jev", "manual", "trend"]);
   expect(s.open.find((o) => o.who === "jev")).toMatchObject({ mfePct: null, maePct: null, manual: false }); // opened this tick: no move measured yet
   expect(Array.isArray(s.curve)).toBe(true);
 });
@@ -276,5 +276,42 @@ test("short only: the reference follows each new low, and a bounce from it is th
     expect(t.snapshot().gauge.extreme).toBeNull();
   } finally {
     config.spike.sides = saved;
+  }
+});
+
+test("trend shadow: long on a break of the lookback high, out on the trailing stop; a break the other way turns it", async () => {
+  const saved = { lb: config.spike.trendLookbackSec, tr: config.spike.trendTrailPct };
+  try {
+    config.spike.trendLookbackSec = 3600; config.spike.trendTrailPct = 1;
+    const v = venue();
+    const t = new SpikeTrader(v, says("hold"), () => {});
+    let b = 6_000_000; // a round minute
+    b = await warm(t, v, b, 3700, 1.5); // 61 minutes flat: the channel is 1.5 / 1.5
+    expect(t.snapshot().trend).toMatchObject({ high: 1.5, low: 1.5, stop: null });
+    v.setMid(1.51); await t.onBlock(b++);
+    const pos = () => t.snapshot().open.find((o) => o.who === "trend");
+    expect(pos()).toMatchObject({ side: "buy" });
+    b = await warm(t, v, b, 5, 1.53); // new best: the stop trails to 1.53 * 0.99
+    expect(t.snapshot().trend.stop).toBeCloseTo(1.53 * 0.99, 9);
+    v.setMid(1.53 * 0.989); await t.onBlock(b++);
+    expect(pos()).toBeUndefined();
+    const rows = () => readFileSync("data/spike.jsonl", "utf8").trim().split("\n").map((l) => JSON.parse(l)).filter((r) => r.type === "trade" && r.who === "trend");
+    expect(rows().at(-1)).toMatchObject({ side: "buy", reason: "trail" });
+    expect(rows().at(-1).pnlPct).toBeGreaterThan(0);
+    expect(t.snapshot().stats.trend).toMatchObject({ trades: 1, tp: 1, sl: 0 });
+
+    // A wide trail: a break below the low closes the long ("reverse") and opens a short.
+    config.spike.trendTrailPct = 5;
+    const v2 = venue();
+    const t2 = new SpikeTrader(v2, says("hold"), () => {});
+    let c = 7_000_020;
+    c = await warm(t2, v2, c, 3700, 1.5);
+    v2.setMid(1.51); await t2.onBlock(c++);
+    c = await warm(t2, v2, c, 5, 1.51);
+    v2.setMid(1.49); await t2.onBlock(c++);
+    expect(t2.snapshot().open.find((o) => o.who === "trend")).toMatchObject({ side: "sell" });
+    expect(rows().at(-1)).toMatchObject({ side: "buy", reason: "reverse" });
+  } finally {
+    config.spike.trendLookbackSec = saved.lb; config.spike.trendTrailPct = saved.tr;
   }
 });

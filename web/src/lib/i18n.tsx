@@ -96,6 +96,7 @@ const en = {
   "spike.resetFailed": "not reset",
   "span.s": "{n}s",
   "span.m": "{n}m",
+  "span.h": "{n}h",
   "unit.min": "min",
   "unit.s": "s",
   "spike.cooldown": "cooldown {n}s",
@@ -111,6 +112,13 @@ const en = {
   "spike.who.jev": "Jev",
   "spike.who.fade": "Fade",
   "spike.who.follow": "Follow",
+  "spike.who.trend": "Trend",
+  "spike.trendNote": "Trend: long above the {lb} high, short below the low, out on a {trail}% trailing stop; ignores the sides setting.",
+  "spike.trendIn": "Trend: {side} from {entry}, trailing stop {stop}.",
+  "spike.trendWaiting": "Trend: waiting for a break above {hi} or below {lo}.",
+  "spike.trendWarming": "Trend: collecting prices ({n} of {need} minutes).",
+  "field.spike.trendLookbackSec": "Trend: breakout lookback",
+  "field.spike.trendTrailPct": "Trend: trailing stop",
   "spike.who.manual": "Manual",
   "spike.manualNote": "Manual: positions taken over from the OKX app, or closed there; not in Jev's row.",
   "spike.manualTag": "manual",
@@ -309,6 +317,7 @@ const ko: Record<Key, string> = {
   "spike.resetFailed": "초기화 안 됨",
   "span.s": "{n}초",
   "span.m": "{n}분",
+  "span.h": "{n}시간",
   "unit.min": "분",
   "unit.s": "초",
   "spike.cooldown": "대기 {n}초",
@@ -324,6 +333,13 @@ const ko: Record<Key, string> = {
   "spike.who.jev": "Jev",
   "spike.who.fade": "되돌림",
   "spike.who.follow": "추종",
+  "spike.who.trend": "추세",
+  "spike.trendNote": "추세는 {lb} 고점을 넘으면 롱, 저점을 깨면 숏으로 들어가고 {trail}% 추적 손절로 나옵니다. 방향 설정과 상관없이 양쪽을 봅니다.",
+  "spike.trendIn": "추세: {side} 보유 중, 진입 {entry}, 추적 손절 {stop}.",
+  "spike.trendWaiting": "추세: {hi} 돌파 또는 {lo} 이탈 대기 중.",
+  "spike.trendWarming": "추세: 가격 수집 중 ({n}/{need}분).",
+  "field.spike.trendLookbackSec": "추세: 돌파 기준 기간",
+  "field.spike.trendTrailPct": "추세: 추적 손절",
   "spike.who.manual": "수동/인계",
   "spike.manualNote": "수동/인계: OKX 앱에서 연 포지션을 봇이 넘겨받았거나 앱에서 청산한 거래로, Jev 성적에서 뺐습니다.",
   "spike.manualTag": "수동/인계",
@@ -474,5 +490,6 @@ export function span(t: T, v: number | string): string {
   if (v === "from low") return t("spike.fromLow");
   const sec = typeof v === "number" ? v : v.endsWith("m") ? Number(v.slice(0, -1)) * 60 : Number(v.replace(/s$/, ""));
   if (!Number.isFinite(sec)) return String(v);
+  if (sec >= 3600 && sec % 3600 === 0) return t("span.h", { n: sec / 3600 });
   return sec % 60 === 0 ? t("span.m", { n: sec / 60 }) : t("span.s", { n: sec });
 }

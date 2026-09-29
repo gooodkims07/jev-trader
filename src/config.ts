@@ -111,6 +111,13 @@ export const config = {
      * a position already open keeps its exits, time limit and session limits. 0 = trade.
      */
     observe: Number(env("SPIKE_OBSERVE", "0")),
+    /**
+     * The trend shadow (simulated, no orders): long when the mid breaks the highest 1-minute close of the last
+     * trendLookbackSec, short below the lowest; out on a trailing stop trendTrailPct from the best mid since
+     * entry, or turned by a break the other way. No take-profit, no time limit.
+     */
+    trendLookbackSec: Number(env("SPIKE_TREND_LOOKBACK_SEC", "14400")),
+    trendTrailPct: Number(env("SPIKE_TREND_TRAIL_PCT", "1.5")),
     /** No new spike for this long after one fires, so one move is asked about once. */
     cooldownSec: Number(env("SPIKE_COOLDOWN_SEC", "180")),
     takerFeeRate: Number(env("OKX_TAKER_FEE_RATE", "0.0005")),

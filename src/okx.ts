@@ -376,6 +376,20 @@ export class OkxVenue implements Venue {
 
   extras() { return { fundingRatePct: this.fundingRatePct }; }
 
+  /** 1-minute closes from OKX candles (confirmed ones only), oldest first: recent, then history pages of 100. */
+  async closes(minutes: number) {
+    type Row = [string, string, string, string, string, string, string, string, string];
+    const out = new Map<number, number>();
+    let rows = await this.api.public<Row[]>("/api/v5/market/candles", { instId: this.instId, bar: "1m", limit: "300" });
+    for (;;) {
+      for (const r of rows) if (r[8] === "1") out.set(Number(r[0]), Number(r[4]));
+      if (out.size >= minutes || !rows.length) break;
+      const oldest = rows[rows.length - 1]![0];
+      rows = await this.api.public<Row[]>("/api/v5/market/history-candles", { instId: this.instId, bar: "1m", limit: "100", after: oldest });
+    }
+    return [...out].sort((a, b) => a[0] - b[0]).slice(-minutes).map(([ts, close]) => ({ ts, close }));
+  }
+
   /** Live only: market orders, the position, fills, and exchange-side exits. See MarketExec. */
   get exec(): MarketExec | undefined {
     if (!this.live) return undefined;

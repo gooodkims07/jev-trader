@@ -25,6 +25,9 @@ interface Def { key: string; group: Group; min: number; max: number; step: numbe
 /** Spike windows offered (seconds): 30 s to 15 min. */
 export const WINDOW_OPTIONS = [30, 60, 120, 180, 300, 600, 900];
 
+/** Trend shadow breakout lookbacks offered (seconds): 1 h to 24 h. */
+export const TREND_LOOKBACK_OPTIONS = [3600, 7200, 14_400, 28_800, 43_200, 86_400];
+
 /** Tick lengths offered for OKX (ms). */
 export const TICK_OPTIONS = [1000, 3000, 5000, 10_000, 15_000, 30_000, 60_000];
 
@@ -41,6 +44,8 @@ const DEFS: Def[] = [
   { key: "spike.maxAdds", group: "spike", min: 0, max: 20, step: 1, unit: "count", get: () => config.spike.maxAdds, set: (v) => { config.spike.maxAdds = v; }, strategies: ["spike"], options: Array.from({ length: 21 }, (_, i) => i) },
   { key: "spike.allowReverse", group: "spike", min: 0, max: 1, step: 1, unit: "bool", get: () => config.spike.allowReverse, set: (v) => { config.spike.allowReverse = v; }, strategies: ["spike"], options: [0, 1] },
   { key: "spike.observe", group: "spike", min: 0, max: 1, step: 1, unit: "bool", get: () => config.spike.observe, set: (v) => { config.spike.observe = v; }, strategies: ["spike"], options: [0, 1], venues: ["okx"] },
+  { key: "spike.trendLookbackSec", group: "spike", min: 3600, max: 86_400, step: 3600, unit: "s", get: () => config.spike.trendLookbackSec, set: (v) => { config.spike.trendLookbackSec = v; }, strategies: ["spike"], options: TREND_LOOKBACK_OPTIONS },
+  { key: "spike.trendTrailPct", group: "spike", min: 0.2, max: 10, step: 0.1, unit: "%", get: () => config.spike.trendTrailPct, set: (v) => { config.spike.trendTrailPct = v; }, strategies: ["spike"] },
   { key: "spike.cooldownSec", group: "spike", min: 0, max: 3600, step: 10, unit: "s", get: () => config.spike.cooldownSec, set: (v) => { config.spike.cooldownSec = v; }, strategies: ["spike"] },
   { key: "tradeSize", group: "size", min: 0, max: 1e9, step: 1, unit: "base", get: () => config.tradeSize, set: (v) => { config.tradeSize = v; }, strategies: ["mm", "spike"] },
   { key: "maxPosition", group: "size", min: 0, max: 1e9, step: 1, unit: "base", get: () => config.maxPosition, set: (v) => { config.maxPosition = v; }, strategies: ["mm"] },

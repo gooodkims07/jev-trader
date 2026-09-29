@@ -135,7 +135,7 @@ export class MockSpikeModel implements SpikeModel {
 
 export const createSpikeModel = (v: VenueInfo): SpikeModel => (config.model === "jev" ? new JevSpikeModel(v) : new MockSpikeModel());
 
-type Who = "jev" | "fade" | "follow";
+type Who = "jev" | "fade" | "follow" | "trend";
 /**
  * entry is the average over the first order and any adds; tp and sl follow it. Live (Jev only): openedTs is
  * when the first order filled, and exitsOnExchange says whether OKX holds the take-profit / stop OCO (else the
@@ -145,7 +145,8 @@ type Who = "jev" | "fade" | "follow";
  * mfe / mae: the best and worst the position stood while open, as a price move from its entry in % (+ in its
  * favour), from the mid at each tick. manual: opened outside the bot (taken over) or added to by hand.
  */
-interface Open { who: Who; side: Side; entry: number; size: number; adds: number; openedAt: number; spikeBlock: number; tp: number; sl: number; openedTs?: number; exitsOnExchange?: boolean; entryFees?: number; mfe?: number; mae?: number; manual?: boolean }
+/** peak: the trend shadow's best mid since entry, for its trailing stop. */
+interface Open { peak?: number; who: Who; side: Side; entry: number; size: number; adds: number; openedAt: number; spikeBlock: number; tp: number; sl: number; openedTs?: number; exitsOnExchange?: boolean; entryFees?: number; mfe?: number; mae?: number; manual?: boolean }
 /** What a spike did to one strategy's position. */
 type Effect = "open" | "add" | "reverse" | "hold" | "out" | "not-asked" | "observed";
 
@@ -161,6 +162,8 @@ interface TradeRow { type: "trade"; instId?: string; live?: boolean; who: Who; s
 
 /** Rows from before `manual` was recorded: taken over (no spike) or closed by hand. */
 const isManual = (r: TradeRow) => r.who === "jev" && (r.manual ?? (r.spikeBlock === -1 || r.reason === "manual"));
+/** The longest trend lookback offered (settings): the closes kept cover it. */
+const TREND_LOOKBACK_MAX = 86_400;
 /** Price moves (%) the excursion table reports, besides the plan's own take-profit and stop. */
 const REACH_LEVELS = [0.5, 1, 1.5, 2, 3, 4];
 type Stat = { trades: number; wins: number; avgPct: number; totalUsd: number; tp: number; sl: number; time: number };
@@ -180,7 +183,9 @@ export interface SpikeSnapshot {
   /** Newest first; `trade` is Jev's closed trade from that spike, if any. */
   spikes: (SpikeRow & { trade: Pick<TradeRow, "side" | "reason" | "pnlPct" | "roePct" | "pnlUsd"> | null; jevOpen: boolean })[];
   /** Cumulative USDT per strategy after each closed trade, oldest first. */
-  curve: { ts: number; jev: number; fade: number; follow: number; manual: number }[];
+  curve: { ts: number; jev: number; fade: number; follow: number; trend: number; manual: number }[];
+  /** The trend shadow: its channel (null until enough history) and settings. Its position is in `open`. */
+  trend: { lookbackSec: number; trailPct: number; high: number | null; low: number | null; minutes: number; stop: number | null };
 }
 
 export class SpikeTrader {
@@ -193,7 +198,7 @@ export class SpikeTrader {
   private open = new Map<Who, Open>();
   private realized = 0; // Jev's closed trades, quote currency, fees included
   private feesUsd = 0;
-  private closed = { jev: 0, fade: 0, follow: 0 };
+  private closed = { jev: 0, fade: 0, follow: 0, trend: 0 };
   /** Everything in data/spike.jsonl, this run and earlier ones, for the dashboard. */
   private spikeRows: SpikeRow[] = [];
   private tradeRows: TradeRow[] = [];
@@ -234,10 +239,12 @@ export class SpikeTrader {
     const r = (sec: number) => { const then = this.midAgo(sec); return then && mid ? round((mid / then - 1) * 100, 3) : null; };
     const stat = (ts: TradeRow[]): Stat => {
       const by = (reason: string) => ts.filter((x) => x.reason === reason).length;
-      return { trades: ts.length, wins: ts.filter((x) => x.pnlPct > 0).length, avgPct: ts.length ? round(ts.reduce((a, x) => a + x.pnlPct, 0) / ts.length, 4) : 0, totalUsd: round(ts.reduce((a, x) => a + x.pnlUsd, 0), 5), tp: by("take-profit"), sl: by("stop-loss"), time: by("time") };
+      // The trend shadow's trailing stop counts as a take-profit when it closed in profit, a stop when not.
+      const trail = (win: boolean) => ts.filter((x) => x.reason === "trail" && x.pnlPct > 0 === win).length;
+      return { trades: ts.length, wins: ts.filter((x) => x.pnlPct > 0).length, avgPct: ts.length ? round(ts.reduce((a, x) => a + x.pnlPct, 0) / ts.length, 4) : 0, totalUsd: round(ts.reduce((a, x) => a + x.pnlUsd, 0), 5), tp: by("take-profit") + trail(true), sl: by("stop-loss") + trail(false), time: by("time") };
     };
     const rowsOf = (who: Who) => this.tradeRows.filter((x) => x.who === who && !isManual(x));
-    const stats = { jev: stat(rowsOf("jev")), fade: stat(rowsOf("fade")), follow: stat(rowsOf("follow")), manual: stat(this.tradeRows.filter(isManual)) };
+    const stats = { jev: stat(rowsOf("jev")), fade: stat(rowsOf("fade")), follow: stat(rowsOf("follow")), trend: stat(rowsOf("trend")), manual: stat(this.tradeRows.filter(isManual)) };
     // The plan's own exits join the levels, so the table says how often they would have been reached.
     const levels = [...new Set([...REACH_LEVELS, round(this.tpPct, 2), round(this.slPct, 2)])].sort((a, b) => a - b);
     const excursion = (ts: TradeRow[]): Excursion => {
@@ -248,13 +255,13 @@ export class SpikeTrader {
         reach: levels.map((pct) => ({ pct, fav: m.filter((x) => x.mfePct! >= pct).length, adv: m.filter((x) => x.maePct! <= -pct).length })),
       };
     };
-    const excursions = { jev: excursion(rowsOf("jev")), fade: excursion(rowsOf("fade")), follow: excursion(rowsOf("follow")) };
+    const excursions = { jev: excursion(rowsOf("jev")), fade: excursion(rowsOf("fade")), follow: excursion(rowsOf("follow")), trend: excursion(rowsOf("trend")) };
     const jevBySpike = new Map(this.tradeRows.filter((x) => x.who === "jev").map((x) => [x.spikeBlock, x]));
     const jevOpen = this.open.get("jev");
-    const cum = { jev: 0, fade: 0, follow: 0, manual: 0 };
+    const cum = { jev: 0, fade: 0, follow: 0, trend: 0, manual: 0 };
     const curve = [...this.tradeRows].sort((a, b) => a.closedAt - b.closedAt).map((x) => {
       cum[isManual(x) ? "manual" : x.who] += x.pnlUsd;
-      return { ts: x.ts ?? x.closedAt * 1000, jev: round(cum.jev, 5), fade: round(cum.fade, 5), follow: round(cum.follow, 5), manual: round(cum.manual, 5) };
+      return { ts: x.ts ?? x.closedAt * 1000, jev: round(cum.jev, 5), fade: round(cum.fade, 5), follow: round(cum.follow, 5), trend: round(cum.trend, 5), manual: round(cum.manual, 5) };
     });
     return {
       plan: { live: this.venue.live, observe: this.venue.live && !!config.spike.observe, sides: config.spike.sides === 1 ? "long" : config.spike.sides === 2 ? "short" : "both", maxAdds: config.spike.maxAdds, allowReverse: !!config.spike.allowReverse, move1mPct: config.spike.move1mPct, move3mPct: config.spike.move3mPct, window1Sec: config.spike.window1Sec, window2Sec: config.spike.window2Sec, takeProfitRoePct: config.spike.takeProfitRoePct, stopLossRoePct: config.spike.stopLossRoePct, takeProfitPct: this.tpPct, stopLossPct: this.slPct, leverage: config.okx.leverage, maxHoldMin: config.spike.maxHoldMin, size: config.tradeSize, base: this.venue.info.base },
@@ -267,6 +274,10 @@ export class SpikeTrader {
       }),
       stats,
       excursions,
+      trend: (() => {
+        const ch = this.channel(), o = this.open.get("trend");
+        return { lookbackSec: config.spike.trendLookbackSec, trailPct: config.spike.trendTrailPct, high: ch?.high ?? null, low: ch?.low ?? null, minutes: this.closes.length, stop: o ? this.trailStop(o) : null };
+      })(),
       spikes: this.spikeRows.slice(-50).reverse().map((s) => {
         const tr = jevBySpike.get(s.block);
         return { ...s, trade: tr ? { side: tr.side, reason: tr.reason, pnlPct: tr.pnlPct, roePct: tr.roePct, pnlUsd: tr.pnlUsd } : null, jevOpen: !!jevOpen && jevOpen.spikeBlock === s.block };
@@ -277,7 +288,7 @@ export class SpikeTrader {
 
   describe() {
     const s = config.spike;
-    return `spike · trigger ${s.move1mPct}% in ${spanLabel(s.window1Sec)} or ${s.move3mPct}% in ${spanLabel(s.window2Sec)} · exits ROE +${s.takeProfitRoePct}% / -${s.stopLossRoePct}% at ${config.okx.leverage}x = price +${this.tpPct}% / -${this.slPct}% · max ${s.maxHoldMin} min · shadows: fade, follow · log data/spike.jsonl`;
+    return `spike · trigger ${s.move1mPct}% in ${spanLabel(s.window1Sec)} or ${s.move3mPct}% in ${spanLabel(s.window2Sec)} · exits ROE +${s.takeProfitRoePct}% / -${s.stopLossRoePct}% at ${config.okx.leverage}x = price +${this.tpPct}% / -${this.slPct}% · max ${s.maxHoldMin} min · shadows: fade, follow, trend (${spanLabel(s.trendLookbackSec)} breakout, ${s.trendTrailPct}% trail) · log data/spike.jsonl`;
   }
 
   async onBlock(block: number) {
@@ -318,11 +329,14 @@ export class SpikeTrader {
           if (res) { ({ quote, fill } = res); note = `EXIT ${res.reason} ${res.pnlPct >= 0 ? "+" : ""}${res.pnlPct.toFixed(3)}% (ROE ${(res.pnlPct * config.okx.leverage).toFixed(1)}%, ${res.pnlUsd >= 0 ? "+" : ""}${res.pnlUsd.toFixed(4)} ${this.venue.info.quoteCcy})`; }
           continue;
         }
+        if (o.who === "trend") continue; // its own exits, in trendStep
         const r = this.exitReason(o, book, block);
         if (!r) continue;
         const res = this.close(o, book, block, r);
         if (o.who === "jev") { ({ quote, fill } = res); note = `EXIT ${r} ${res.pnlPct >= 0 ? "+" : ""}${res.pnlPct.toFixed(3)}% (ROE ${(res.pnlPct * config.okx.leverage).toFixed(1)}%)`; }
       }
+
+      this.trendStep(book, block);
 
       // Live: the session stop and take-profit (RISK_SESSION_*) close Jev's position and end the run.
       const halt = this.exec ? this.sessionLimit(book) : null;
@@ -373,6 +387,63 @@ export class SpikeTrader {
     } finally {
       this.busy = false;
     }
+  }
+
+  // ---- the trend shadow (simulated): breakout of the lookback's closes, trailing stop ----
+
+  /** 1-minute closes (the last mid of each minute), oldest first; seeded from the exchange at start (warmUp). */
+  private closes: { m: number; c: number }[] = [];
+
+  /** Seed the closes from the venue's candles, so the trend shadow need not wait hours after a restart. */
+  async warmUp() {
+    if (!this.venue.closes) return;
+    try {
+      const rows = await this.venue.closes(Math.round(TREND_LOOKBACK_MAX / 60) + 5);
+      this.closes = rows.map((r) => ({ m: Math.floor(r.ts / 60_000), c: r.close }));
+      console.log(`trend shadow: ${this.closes.length} 1-minute closes from the exchange`);
+    } catch (e) {
+      console.warn(`trend shadow: no candles (${(e as Error).message}); it fills from the live price`);
+    }
+  }
+
+  /** Highest and lowest close over the lookback, the minute now left out; null without that much history. */
+  private channel(): { high: number; low: number } | null {
+    const n = Math.round(config.spike.trendLookbackSec / 60), done = this.closes.slice(0, -1);
+    if (done.length < n) return null;
+    const w = done.slice(-n).map((x) => x.c);
+    return { high: Math.max(...w), low: Math.min(...w) };
+  }
+
+  private trailStop(o: Open) {
+    const peak = o.peak ?? o.entry, trail = config.spike.trendTrailPct / 100;
+    return o.side === "buy" ? peak * (1 - trail) : peak * (1 + trail);
+  }
+
+  /** Each tick: record the close, then trail or turn the trend position, or open one on a breakout. */
+  private trendStep(book: Book, block: number) {
+    const mid = book.mid, m = Math.floor(block / 60); // blocks are seconds here
+    const last = this.closes[this.closes.length - 1];
+    if (last && last.m === m) last.c = mid; else if (!last || m > last.m) this.closes.push({ m, c: mid });
+    const keep = Math.round(TREND_LOOKBACK_MAX / 60) + 10;
+    if (this.closes.length > keep) this.closes.splice(0, this.closes.length - keep);
+    const ch = this.channel();
+    const o = this.open.get("trend");
+    if (o) {
+      o.peak = o.side === "buy" ? Math.max(o.peak ?? o.entry, mid) : Math.min(o.peak ?? o.entry, mid);
+      const stop = this.trailStop(o);
+      const turned = !!ch && (o.side === "buy" ? mid < ch.low : mid > ch.high);
+      if (o.side === "buy" ? mid <= stop : mid >= stop) this.close(o, book, block, "trail");
+      else if (turned) this.close(o, book, block, "reverse");
+      else return;
+      if (!turned) return;
+    }
+    if (!ch) return;
+    const side: Side | null = mid > ch.high ? "buy" : mid < ch.low ? "sell" : null;
+    if (!side) return;
+    this.openPos("trend", side, book, block);
+    const n = this.open.get("trend")!;
+    n.peak = mid;
+    console.log(`trend shadow: ${side === "buy" ? "long" : "short"} at ${n.entry} (broke the ${spanLabel(config.spike.trendLookbackSec)} ${side === "buy" ? "high" : "low"} ${side === "buy" ? ch.high : ch.low})`);
   }
 
   /** The mid `sec` seconds before the newest sample (the last one at or before then), or null without that much history. */
