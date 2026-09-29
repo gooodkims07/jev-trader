@@ -14,6 +14,7 @@ function choice(s: SpikeRow, t: T): { text: string; colour: string } {
   const p = Math.round((a === "buy" ? s.jev.probabilities.buy : s.jev.probabilities.sell) * 100);
   const side = t(a === "buy" ? "chart.long" : "chart.short");
   const colour = a === "buy" ? "var(--buy-ink)" : "var(--sell-ink)";
+  if (s.effect === "observed") return { text: t("spike.observed", { side, p }), colour: "var(--muted)" };
   if (s.effect === "add") return { text: t("spike.added", { side, p }), colour };
   if (s.effect === "reverse") return { text: t("spike.reversed", { side, p }), colour };
   if (s.effect === "hold") return { text: t("spike.kept", { side, p }), colour: "var(--muted)" };

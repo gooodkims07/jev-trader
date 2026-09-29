@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { SpikeSnapshot } from "@/lib/types";
 import { useVenue } from "@/lib/venue";
 import { span, useLang } from "@/lib/i18n";
@@ -73,6 +73,24 @@ export default function SpikeStatus({ snap, apiUrl }: { snap: SpikeSnapshot | nu
     }
     setTimeout(() => setResetMsg(null), 4000);
   };
+  // Live only: trade or observe (no new orders), POST /settings { "spike.observe": 0 | 1 } with the admin token.
+  const [modeMsg, setModeMsg] = useState<string | null>(null);
+  const [pending, setPending] = useState<boolean | null>(null);
+  const setObserve = async (on: boolean) => {
+    let token = "";
+    try { token = localStorage.getItem("jev.adminToken") ?? ""; } catch { /* no storage */ }
+    if (!token) { setModeMsg(t("spike.resetNoToken")); setTimeout(() => setModeMsg(null), 4000); return; }
+    setPending(on);
+    try {
+      const r = await fetch(`${apiUrl.replace(/\/+$/, "")}/settings`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: JSON.stringify({ "spike.observe": on ? 1 : 0 }) });
+      if (!r.ok) { setPending(null); setModeMsg(r.status === 401 ? t("settings.unauthorized") : t("mode.failed")); setTimeout(() => setModeMsg(null), 4000); }
+    } catch {
+      setPending(null); setModeMsg(t("mode.failed")); setTimeout(() => setModeMsg(null), 4000);
+    }
+  };
+  const serverObserve = !!snap?.plan.observe;
+  useEffect(() => { if (pending !== null && pending === serverObserve) setPending(null); }, [pending, serverObserve]);
+  const observing = pending ?? serverObserve;
   const plan = snap?.plan;
   const jev = snap?.open.find((o) => o.who === "jev") ?? null;
   const px = (n: number) => n.toFixed(venue.priceDecimals);
@@ -81,7 +99,15 @@ export default function SpikeStatus({ snap, apiUrl }: { snap: SpikeSnapshot | nu
       <section className={styles.section}>
         <div className={styles.label}>
           <span>{t("spike.position")}</span>
+          {plan?.live ? (
+            <span className={styles.mode} role="group" aria-label={t("mode.label")}>
+              {modeMsg ? <span className={styles.labelNote}>{modeMsg}</span> : null}
+              <button type="button" className={!observing ? styles.modeLive : undefined} aria-pressed={!observing} disabled={pending !== null} onClick={() => observing && setObserve(false)}>{t("mode.live")}</button>
+              <button type="button" className={observing ? styles.modeObserve : undefined} aria-pressed={observing} disabled={pending !== null} onClick={() => !observing && setObserve(true)}>{t("mode.observe")}</button>
+            </span>
+          ) : null}
         </div>
+        {plan?.live && observing ? <div className={styles.observeNote}>{t(jev ? "mode.observeNoteOpen" : "mode.observeNote")}</div> : null}
         {plan ? (
           // The plan at a glance: exits (ROE, with the price move they mean), leverage, sides, hold limit.
           <div className={styles.chips}>

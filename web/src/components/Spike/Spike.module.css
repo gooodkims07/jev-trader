@@ -384,3 +384,48 @@
     margin-top: 4px;
   }
 }
+
+/* ---- live / observe toggle (live only) ---- */
+.mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  letter-spacing: 0;
+}
+
+.mode button {
+  appearance: none;
+  border: 1px solid var(--border-2);
+  background: transparent;
+  border-radius: 999px;
+  padding: 2px 9px;
+  font: 500 10.5px var(--font-sans), Inter, system-ui, sans-serif;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.mode button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.mode .modeLive {
+  background: var(--buy-ink);
+  border-color: var(--buy-ink);
+  color: var(--bg);
+}
+
+.mode .modeObserve {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--bg);
+}
+
+.observeNote {
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: var(--hold-cell);
+  color: var(--ink-2);
+  font-size: 12px;
+}

@@ -40,6 +40,7 @@ const DEFS: Def[] = [
   { key: "spike.sides", group: "spike", min: 0, max: 2, step: 1, unit: "sides", get: () => config.spike.sides, set: (v) => { config.spike.sides = v; }, strategies: ["spike"], options: [0, 1, 2] },
   { key: "spike.maxAdds", group: "spike", min: 0, max: 5, step: 1, unit: "count", get: () => config.spike.maxAdds, set: (v) => { config.spike.maxAdds = v; }, strategies: ["spike"], options: [0, 1, 2, 3, 4, 5] },
   { key: "spike.allowReverse", group: "spike", min: 0, max: 1, step: 1, unit: "bool", get: () => config.spike.allowReverse, set: (v) => { config.spike.allowReverse = v; }, strategies: ["spike"], options: [0, 1] },
+  { key: "spike.observe", group: "spike", min: 0, max: 1, step: 1, unit: "bool", get: () => config.spike.observe, set: (v) => { config.spike.observe = v; }, strategies: ["spike"], options: [0, 1], venues: ["okx"] },
   { key: "spike.cooldownSec", group: "spike", min: 0, max: 3600, step: 10, unit: "s", get: () => config.spike.cooldownSec, set: (v) => { config.spike.cooldownSec = v; }, strategies: ["spike"] },
   { key: "tradeSize", group: "size", min: 0, max: 1e9, step: 1, unit: "base", get: () => config.tradeSize, set: (v) => { config.tradeSize = v; }, strategies: ["mm", "spike"] },
   { key: "maxPosition", group: "size", min: 0, max: 1e9, step: 1, unit: "base", get: () => config.maxPosition, set: (v) => { config.maxPosition = v; }, strategies: ["mm"] },

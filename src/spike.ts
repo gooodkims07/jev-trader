@@ -143,7 +143,7 @@ type Who = "jev" | "fade" | "follow";
  */
 interface Open { who: Who; side: Side; entry: number; size: number; adds: number; openedAt: number; spikeBlock: number; tp: number; sl: number; openedTs?: number; exitsOnExchange?: boolean; entryFees?: number }
 /** What a spike did to one strategy's position. */
-type Effect = "open" | "add" | "reverse" | "hold" | "out" | "not-asked";
+type Effect = "open" | "add" | "reverse" | "hold" | "out" | "not-asked" | "observed";
 
 const LOG = "data/spike.jsonl";
 /** A row of data/spike.jsonl. */
@@ -153,7 +153,7 @@ interface TradeRow { type: "trade"; instId?: string; live?: boolean; who: Who; s
 
 /** What the dashboard's spike panels read from GET /spike. */
 export interface SpikeSnapshot {
-  plan: { sides: "both" | "long" | "short"; maxAdds: number; allowReverse: boolean; move1mPct: number; move3mPct: number; window1Sec: number; window2Sec: number; takeProfitRoePct: number; stopLossRoePct: number; takeProfitPct: number; stopLossPct: number; leverage: number; maxHoldMin: number; size: number; base: string };
+  plan: { live: boolean; observe: boolean; sides: "both" | "long" | "short"; maxAdds: number; allowReverse: boolean; move1mPct: number; move3mPct: number; window1Sec: number; window2Sec: number; takeProfitRoePct: number; stopLossRoePct: number; takeProfitPct: number; stopLossPct: number; leverage: number; maxHoldMin: number; size: number; base: string };
   /** The mid's move now vs 1 and 3 minutes ago, in %, or null while history fills. */
   /** Long or short only: `extreme` is the high (long only) or low (short only) the next spike is measured from, and r1Pct the move from it. */
   gauge: { r1Pct: number | null; r3Pct: number | null; cooldownSec: number; extreme?: { kind: "high" | "low"; price: number } | null };
@@ -228,7 +228,7 @@ export class SpikeTrader {
       return { ts: x.ts ?? x.closedAt * 1000, jev: round(cum.jev, 5), fade: round(cum.fade, 5), follow: round(cum.follow, 5) };
     });
     return {
-      plan: { sides: config.spike.sides === 1 ? "long" : config.spike.sides === 2 ? "short" : "both", maxAdds: config.spike.maxAdds, allowReverse: !!config.spike.allowReverse, move1mPct: config.spike.move1mPct, move3mPct: config.spike.move3mPct, window1Sec: config.spike.window1Sec, window2Sec: config.spike.window2Sec, takeProfitRoePct: config.spike.takeProfitRoePct, stopLossRoePct: config.spike.stopLossRoePct, takeProfitPct: this.tpPct, stopLossPct: this.slPct, leverage: config.okx.leverage, maxHoldMin: config.spike.maxHoldMin, size: config.tradeSize, base: this.venue.info.base },
+      plan: { live: this.venue.live, observe: this.venue.live && !!config.spike.observe, sides: config.spike.sides === 1 ? "long" : config.spike.sides === 2 ? "short" : "both", maxAdds: config.spike.maxAdds, allowReverse: !!config.spike.allowReverse, move1mPct: config.spike.move1mPct, move3mPct: config.spike.move3mPct, window1Sec: config.spike.window1Sec, window2Sec: config.spike.window2Sec, takeProfitRoePct: config.spike.takeProfitRoePct, stopLossRoePct: config.spike.stopLossRoePct, takeProfitPct: this.tpPct, stopLossPct: this.slPct, leverage: config.okx.leverage, maxHoldMin: config.spike.maxHoldMin, size: config.tradeSize, base: this.venue.info.base },
       gauge: this.extreme && mid
         ? { r1Pct: round((mid / this.extreme.price - 1) * 100, 3), r3Pct: null, cooldownSec: Math.max(0, this.cooldownUntil - now), extreme: this.extreme }
         : { r1Pct: r(config.spike.window1Sec), r3Pct: r(config.spike.window2Sec), cooldownSec: Math.max(0, this.cooldownUntil - now), extreme: null },
@@ -322,12 +322,15 @@ export class SpikeTrader {
           this.totals.decisions++;
           this.totals.jevUsd += (decision.inputTokens / 1e6) * config.jevUsdPerMTok;
           const want = decision.action === "hold" ? null : decision.action;
-          const r = this.exec ? await this.liveAct(want, book, block) : this.act("jev", want, book, block);
+          // Observing (live): Jev's call is recorded, nothing is sent.
+          const observing = !!this.exec && !!config.spike.observe;
+          const r = observing ? { effect: (want ? "observed" : inPos ? "hold" : "out") as Effect, quote: null, fill: null }
+            : this.exec ? await this.liveAct(want, book, block) : this.act("jev", want, book, block);
           effect = r.effect;
-          if (r.quote) ({ quote, fill } = r);
+          if (r.quote) ({ quote, fill } = r as { quote: Quote; fill: Fill | null });
           if (effect === "out" || effect === "hold") this.totals.skips++;
           const style = decision.action === "hold" ? "" : decision.action === followSide ? " (follow)" : " (fade)";
-          note = `SPIKE ${spike.direction} ${spike.movePct.toFixed(2)}% in ${spike.window} -> ${decision.action === "hold" ? "stay out" : decision.action}${style}: ${effect}${r.exitPct !== undefined ? ` (closed ${r.exitPct >= 0 ? "+" : ""}${r.exitPct.toFixed(3)}%)` : ""}`;
+          note = `SPIKE ${spike.direction} ${spike.movePct.toFixed(2)}% in ${spike.window} -> ${decision.action === "hold" ? "stay out" : decision.action}${style}: ${effect}${"exitPct" in r && r.exitPct !== undefined ? ` (closed ${r.exitPct >= 0 ? "+" : ""}${r.exitPct.toFixed(3)}%)` : ""}${observing ? " (observing: no order)" : ""}`;
         } else note = `SPIKE ${spike.direction} ${spike.movePct.toFixed(2)}% in ${spike.window} (in a position: not asked)`;
         const row: SpikeRow = { type: "spike", instId: this.venue.info.market, live: this.venue.live, block, ts: Date.now(), window: spike.window, direction: spike.direction, movePct: spike.movePct, mid: book.mid, asked: !!decision, effect, jev: decision && { action: decision.action, probabilities: decision.probabilities, latencyMs: Math.round(decision.latencyMs) } };
         this.spikeRows.push(row);

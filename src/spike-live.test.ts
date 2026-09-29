@@ -226,6 +226,23 @@ test("sync: exits canceled by hand are placed again", async () => {
   } finally { reset(); }
 });
 
+test("observe: spikes are found and Jev asked, but no order is sent; back to trading, orders go again", async () => {
+  try {
+    config.tradeSize = 5; config.okx.leverage = 5; config.risk.sessionStopLoss = 0; config.spike.observe = 1;
+    const f = liveVenue(); const notes: string[] = [];
+    const t = new SpikeTrader(f.v, says("buy"), (_e, n) => { if (n) notes.push(n); });
+    let b = await openLong(t, f, 13000);
+    expect(f.ex.orders.length).toBe(0);
+    expect(notes.find((n) => n.startsWith("SPIKE"))).toMatch(/observing: no order/);
+    expect(t.snapshot().spikes[0]).toMatchObject({ asked: true, effect: "observed" });
+    expect(t.snapshot().plan.observe).toBe(true);
+    config.spike.observe = 0;
+    for (let i = 0; i < 200; i++) await t.onBlock(b++); // past the cooldown
+    f.setMid(2 * 0.994 * 0.994); await t.onBlock(b++);
+    expect(f.ex.orders).toEqual([{ side: "buy", size: 5, reduceOnly: false }]);
+  } finally { reset(); config.spike.observe = 0; }
+});
+
 test("live and dry-run records are kept apart: each mode loads only its own", async () => {
   const f = liveVenue();
   const live = new SpikeTrader(f.v, says("hold"), () => {});

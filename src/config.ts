@@ -106,6 +106,11 @@ export const config = {
     maxAdds: Number(env("SPIKE_MAX_ADDS", "0")),
     /** While in a position, a new spike on the other side closes it and opens the other way (1) or is ignored (0). */
     allowReverse: Number(env("SPIKE_ALLOW_REVERSE", "0")),
+    /**
+     * Live only: 1 = observe. Spikes are still found and Jev still asked, but no new position or add is sent;
+     * a position already open keeps its exits, time limit and session limits. 0 = trade.
+     */
+    observe: Number(env("SPIKE_OBSERVE", "0")),
     /** No new spike for this long after one fires, so one move is asked about once. */
     cooldownSec: Number(env("SPIKE_COOLDOWN_SEC", "180")),
     takerFeeRate: Number(env("OKX_TAKER_FEE_RATE", "0.0005")),
