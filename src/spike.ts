@@ -146,7 +146,8 @@ type Who = "jev" | "fade" | "follow" | "trend";
  * favour), from the mid at each tick. manual: opened outside the bot (taken over) or added to by hand.
  */
 /** peak: the trend shadow's best mid since entry, for its trailing stop. */
-interface Open { peak?: number; who: Who; side: Side; entry: number; size: number; adds: number; openedAt: number; spikeBlock: number; tp: number; sl: number; openedTs?: number; exitsOnExchange?: boolean; entryFees?: number; mfe?: number; mae?: number; manual?: boolean }
+/** lev: the leverage the position opened with (it keeps it if the setting changes). */
+interface Open { lev?: number; peak?: number; who: Who; side: Side; entry: number; size: number; adds: number; openedAt: number; spikeBlock: number; tp: number; sl: number; openedTs?: number; exitsOnExchange?: boolean; entryFees?: number; mfe?: number; mae?: number; manual?: boolean }
 /** What a spike did to one strategy's position. */
 type Effect = "open" | "add" | "reverse" | "hold" | "out" | "not-asked" | "observed";
 
@@ -209,6 +210,11 @@ export class SpikeTrader {
   /** Read each time: the settings panel can change the ROE targets while the bot runs. Open positions keep theirs. */
   private get tpPct() { return config.spike.takeProfitRoePct / config.okx.leverage; }
   private get slPct() { return config.spike.stopLossRoePct / config.okx.leverage; }
+  /**
+   * The leverage a position opened with, for its ROE. Its take-profit and stop are price moves (tpPct / slPct):
+   * a change of leverage scales the ROE settings so those stay put (settings.ts).
+   */
+  private lev(o: Open) { return o.lev ?? config.okx.leverage; }
 
   /** Live: Jev's orders go to the exchange through this. Dry run: undefined, everything is simulated. */
   private readonly exec: MarketExec | undefined;
@@ -270,7 +276,7 @@ export class SpikeTrader {
         : { r1Pct: r(config.spike.window1Sec), r3Pct: r(config.spike.window2Sec), cooldownSec: Math.max(0, this.cooldownUntil - now), extreme: null },
       open: [...this.open.values()].map((o) => {
         const dir = o.side === "buy" ? 1 : -1, u = mid ? dir * (mid / o.entry - 1) * 100 : 0;
-        return { who: o.who, side: o.side, entry: o.entry, size: o.size, adds: o.adds, tp: o.tp, sl: o.sl, heldMin: round((now - o.openedAt) / 60, 1), unrealizedPct: round(u, 3), unrealizedRoePct: round(u * config.okx.leverage, 2), unrealizedUsd: round(mid ? dir * (mid - o.entry) * o.size : 0, 4), mfePct: o.mfe === undefined ? null : round(o.mfe, 3), maePct: o.mae === undefined ? null : round(o.mae, 3), manual: !!o.manual };
+        return { who: o.who, side: o.side, entry: o.entry, size: o.size, adds: o.adds, tp: o.tp, sl: o.sl, heldMin: round((now - o.openedAt) / 60, 1), unrealizedPct: round(u, 3), unrealizedRoePct: round(u * this.lev(o), 2), unrealizedUsd: round(mid ? dir * (mid - o.entry) * o.size : 0, 4), mfePct: o.mfe === undefined ? null : round(o.mfe, 3), maePct: o.mae === undefined ? null : round(o.mae, 3), manual: !!o.manual };
       }),
       stats,
       excursions,
@@ -568,7 +574,7 @@ export class SpikeTrader {
     const r = await this.exec!.marketOrder(side, config.tradeSize, false);
     this.ownOrders.add(r.ordId);
     const dir = side === "buy" ? 1 : -1;
-    const o: Open = { who: "jev", side, entry: r.avgPx, size: r.size, adds: 0, openedAt: block, spikeBlock: block, openedTs: Date.now() - 1000, tp: r.avgPx * (1 + (dir * this.tpPct) / 100), sl: r.avgPx * (1 - (dir * this.slPct) / 100) };
+    const o: Open = { lev: config.okx.leverage, who: "jev", side, entry: r.avgPx, size: r.size, adds: 0, openedAt: block, spikeBlock: block, openedTs: Date.now() - 1000, tp: r.avgPx * (1 + (dir * this.tpPct) / 100), sl: r.avgPx * (1 - (dir * this.slPct) / 100) };
     o.entryFees = r.fee;
     this.open.set("jev", o);
     this.feesUsd += r.fee; this.realized -= r.fee;
@@ -698,7 +704,7 @@ export class SpikeTrader {
     const fee = config.spike.takerFeeRate * entry * size;
     // Adds counted as if it was built from orders of the current size: 40 at 10 a time is 1 + 3 adds.
     const adds = Math.max(0, Math.round(size / config.tradeSize) - 1);
-    const n: Open = { who: "jev", side, entry, size, adds, openedAt: block, spikeBlock: -1, openedTs: Date.now() - 1000, entryFees: fee, manual: true, tp: entry * (1 + (dir * this.tpPct) / 100), sl: entry * (1 - (dir * this.slPct) / 100) };
+    const n: Open = { lev: config.okx.leverage, who: "jev", side, entry, size, adds, openedAt: block, spikeBlock: -1, openedTs: Date.now() - 1000, entryFees: fee, manual: true, tp: entry * (1 + (dir * this.tpPct) / 100), sl: entry * (1 - (dir * this.slPct) / 100) };
     this.open.set("jev", n);
     this.feesUsd += fee; this.realized -= fee;
     n.exitsOnExchange = await exec.setExits({ side, tp: n.tp, sl: n.sl });
@@ -748,7 +754,7 @@ export class SpikeTrader {
     const pnlUsd = gross - exitFee - entryFees;
     const pnlPct = (pnlUsd / (o.entry * o.size)) * 100;
     this.closed[o.who]++;
-    const row: TradeRow = { type: "trade", instId: this.venue.info.market, live: this.venue.live, who: o.who, side: o.side, spikeBlock: o.spikeBlock, openedAt: o.openedAt, closedAt: block, heldMin: round((block - o.openedAt) / 60, 1), entry: o.entry, exit, size: o.size, adds: o.adds, reason, pnlPct: round(pnlPct, 4), roePct: round(pnlPct * config.okx.leverage, 2), pnlUsd: round(pnlUsd, 5), ts: Date.now(), ...this.excursionFields(o), ...(o.who === "jev" ? { manual: !!o.manual || reason === "manual" } : {}) };
+    const row: TradeRow = { type: "trade", instId: this.venue.info.market, live: this.venue.live, who: o.who, side: o.side, spikeBlock: o.spikeBlock, openedAt: o.openedAt, closedAt: block, heldMin: round((block - o.openedAt) / 60, 1), entry: o.entry, exit, size: o.size, adds: o.adds, reason, pnlPct: round(pnlPct, 4), roePct: round(pnlPct * this.lev(o), 2), pnlUsd: round(pnlUsd, 5), ts: Date.now(), ...this.excursionFields(o), ...(o.who === "jev" ? { manual: !!o.manual || reason === "manual" } : {}) };
     this.tradeRows.push(row);
     this.log(row);
     this.feesUsd += exitFee;
@@ -813,7 +819,7 @@ export class SpikeTrader {
     const o = this.open.get("jev");
     if (!o) return null;
     const dir = o.side === "buy" ? 1 : -1, u = dir * (book.mid / o.entry - 1) * 100;
-    return { side: dir > 0 ? "long" : "short", sizeMon: o.size, entry: o.entry, adds: o.adds, addsLeft: Math.max(0, config.spike.maxAdds - o.adds), heldMin: round((this.lastBlock - o.openedAt) / 60, 1), unrealizedRoePct: round(u * config.okx.leverage, 2) };
+    return { side: dir > 0 ? "long" : "short", sizeMon: o.size, entry: o.entry, adds: o.adds, addsLeft: Math.max(0, config.spike.maxAdds - o.adds), heldMin: round((this.lastBlock - o.openedAt) / 60, 1), unrealizedRoePct: round(u * this.lev(o), 2) };
   }
 
   /**
@@ -857,7 +863,7 @@ export class SpikeTrader {
   private openPos(who: Who, side: Side, book: Book, block: number) {
     const entry = side === "buy" ? book.ask : book.bid, size = config.tradeSize;
     const dir = side === "buy" ? 1 : -1;
-    const o: Open = { who, side, entry, size, adds: 0, openedAt: block, spikeBlock: block, tp: entry * (1 + (dir * this.tpPct) / 100), sl: entry * (1 - (dir * this.slPct) / 100) };
+    const o: Open = { lev: config.okx.leverage, who, side, entry, size, adds: 0, openedAt: block, spikeBlock: block, tp: entry * (1 + (dir * this.tpPct) / 100), sl: entry * (1 - (dir * this.slPct) / 100) };
     this.open.set(who, o);
     if (who !== "jev") return { quote: null, fill: null };
     const fee = size * entry * config.spike.takerFeeRate;
@@ -886,7 +892,7 @@ export class SpikeTrader {
     const pnlUsd = dir * (exit - o.entry) * o.size - fees;
     const pnlPct = (pnlUsd / (o.entry * o.size)) * 100; // on notional, fees included
     this.closed[o.who]++;
-    const row: TradeRow = { type: "trade", instId: this.venue.info.market, live: this.venue.live, who: o.who, side: o.side, spikeBlock: o.spikeBlock, openedAt: o.openedAt, closedAt: block, heldMin: round((block - o.openedAt) / 60, 1), entry: o.entry, exit, size: o.size, adds: o.adds, reason, pnlPct: round(pnlPct, 4), roePct: round(pnlPct * config.okx.leverage, 2), pnlUsd: round(pnlUsd, 5), ts: Date.now(), ...this.excursionFields(o) };
+    const row: TradeRow = { type: "trade", instId: this.venue.info.market, live: this.venue.live, who: o.who, side: o.side, spikeBlock: o.spikeBlock, openedAt: o.openedAt, closedAt: block, heldMin: round((block - o.openedAt) / 60, 1), entry: o.entry, exit, size: o.size, adds: o.adds, reason, pnlPct: round(pnlPct, 4), roePct: round(pnlPct * this.lev(o), 2), pnlUsd: round(pnlUsd, 5), ts: Date.now(), ...this.excursionFields(o) };
     this.tradeRows.push(row);
     this.log(row);
     if (o.who !== "jev") return { quote: null, fill: null, pnlPct };

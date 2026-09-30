@@ -28,6 +28,9 @@ export const WINDOW_OPTIONS = [30, 60, 120, 180, 300, 600, 900];
 /** Trend shadow breakout lookbacks offered (seconds): 1 h to 24 h. */
 export const TREND_LOOKBACK_OPTIONS = [3600, 7200, 14_400, 28_800, 43_200, 86_400];
 
+/** Leverage offered (spike on OKX). A change applies to the next position; the open one keeps its own. */
+export const LEVERAGE_OPTIONS = [1, 2, 3, 5, 10, 15, 20];
+
 /** Tick lengths offered for OKX (ms). */
 export const TICK_OPTIONS = [1000, 3000, 5000, 10_000, 15_000, 30_000, 60_000];
 
@@ -46,6 +49,7 @@ const DEFS: Def[] = [
   { key: "spike.observe", group: "spike", min: 0, max: 1, step: 1, unit: "bool", get: () => config.spike.observe, set: (v) => { config.spike.observe = v; }, strategies: ["spike"], options: [0, 1], venues: ["okx"] },
   { key: "spike.trendLookbackSec", group: "spike", min: 3600, max: 86_400, step: 3600, unit: "s", get: () => config.spike.trendLookbackSec, set: (v) => { config.spike.trendLookbackSec = v; }, strategies: ["spike"], options: TREND_LOOKBACK_OPTIONS },
   { key: "spike.trendTrailPct", group: "spike", min: 0.2, max: 10, step: 0.1, unit: "%", get: () => config.spike.trendTrailPct, set: (v) => { config.spike.trendTrailPct = v; }, strategies: ["spike"] },
+  { key: "okx.leverage", group: "risk", min: 1, max: 20, step: 1, unit: "x", get: () => config.okx.leverage, set: (v) => { config.okx.leverage = v; }, strategies: ["spike"], options: LEVERAGE_OPTIONS, venues: ["okx"] },
   { key: "spike.cooldownSec", group: "spike", min: 0, max: 3600, step: 10, unit: "s", get: () => config.spike.cooldownSec, set: (v) => { config.spike.cooldownSec = v; }, strategies: ["spike"] },
   { key: "tradeSize", group: "size", min: 0, max: 1e9, step: 1, unit: "base", get: () => config.tradeSize, set: (v) => { config.tradeSize = v; }, strategies: ["mm", "spike"] },
   { key: "maxPosition", group: "size", min: 0, max: 1e9, step: 1, unit: "base", get: () => config.maxPosition, set: (v) => { config.maxPosition = v; }, strategies: ["mm"] },
@@ -130,6 +134,16 @@ export function settingsHandler(venue: Venue) {
     }
     const w1 = val("spike.window1Sec"), w2 = val("spike.window2Sec");
     if (w1 !== undefined && w2 !== undefined && w1 >= w2) errors["spike.window2Sec"] = "must be longer than the short window";
+    // A new leverage keeps the take-profit and stop where they are in price: their ROE scales with it, unless
+    // this same change sets them.
+    const lev = defs.find((x) => x.key === "okx.leverage");
+    if (lev && next.has(lev) && next.get(lev) !== lev.get()) {
+      const k = next.get(lev)! / lev.get();
+      for (const key of ["spike.takeProfitRoePct", "spike.stopLossRoePct"]) {
+        const d = defs.find((x) => x.key === key);
+        if (d && !next.has(d)) next.set(d, Math.min(d.max, Math.max(d.min, Math.round(d.get() * k * 100) / 100)));
+      }
+    }
     const cap = val("maxPosition");
     if (cap !== undefined && size !== undefined && cap < size) errors.maxPosition = "must be at least the order size";
     if (Object.keys(errors).length) return { status: 400, body: { error: "invalid", errors } };

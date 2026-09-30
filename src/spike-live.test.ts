@@ -294,6 +294,23 @@ test("applyExits: the open position takes the current take-profit and stop, on t
   } finally { reset(); }
 });
 
+test("leverage: an open position keeps its own for its ROE; the next one opens at the new one", async () => {
+  try {
+    config.tradeSize = 5; config.okx.leverage = 5; config.risk.sessionStopLoss = 0;
+    const f = liveVenue();
+    const t = new SpikeTrader(f.v, says("buy"), () => {});
+    let b = await openLong(t, f, 16000);
+    const tp = f.ex.exits.at(-1)!.tp;
+    config.okx.leverage = 10; config.spike.takeProfitRoePct *= 2; config.spike.stopLossRoePct *= 2; // what the settings do
+    f.setMid(2 * 0.994 * 1.01); await t.onBlock(b++);
+    const o = t.snapshot().open.find((x) => x.who === "jev")!;
+    expect(o.unrealizedRoePct).toBeCloseTo(o.unrealizedPct * 5, 1); // still 5x
+    expect(t.snapshot().plan.takeProfitPct).toBeCloseTo(4, 9); // same price move as before
+    const r = await t.applyExits();
+    expect(r!.tp).toBeCloseTo(tp, 9);
+  } finally { reset(); }
+});
+
 test("live and dry-run records are kept apart: each mode loads only its own", async () => {
   const f = liveVenue();
   const live = new SpikeTrader(f.v, says("hold"), () => {});

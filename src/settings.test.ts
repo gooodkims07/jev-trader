@@ -121,3 +121,24 @@ test("spike windows: offered lengths only, and the long window must be longer th
     config.adminToken = saved.token; config.strategy = saved.strat; config.spike.window1Sec = saved.w1; config.spike.window2Sec = saved.w2;
   }
 });
+
+test("leverage: offered values only; a change scales the ROE targets so take-profit and stop stay put in price", async () => {
+  const saved = { token: config.adminToken, strat: config.strategy, lev: config.okx.leverage, tp: config.spike.takeProfitRoePct, sl: config.spike.stopLossRoePct };
+  try {
+    config.adminToken = "s3cret-token"; config.strategy = "spike";
+    config.okx.leverage = 5; config.spike.takeProfitRoePct = 7; config.spike.stopLossRoePct = 5; // +1.4% / -1%
+    const h = settingsHandler(venue);
+    const post = (b: unknown) => h(new Request("http://x/settings", { method: "POST", body: JSON.stringify(b), headers: { authorization: "Bearer s3cret-token" } }));
+    expect(((await post({ "okx.leverage": 7 })).body as any).errors).toEqual({ "okx.leverage": "one of 1, 2, 3, 5, 10, 15, 20" });
+    expect((await post({ "okx.leverage": 10 })).status).toBe(200);
+    expect([config.okx.leverage, config.spike.takeProfitRoePct, config.spike.stopLossRoePct]).toEqual([10, 14, 10]); // still +1.4% / -1%
+    expect((await post({ "okx.leverage": 3 })).status).toBe(200);
+    expect(config.spike.takeProfitRoePct / 3).toBeCloseTo(1.4, 2);
+    expect(config.spike.stopLossRoePct / 3).toBeCloseTo(1, 2);
+    // Set together: the ROE given wins.
+    expect((await post({ "okx.leverage": 5, "spike.takeProfitRoePct": 10 })).status).toBe(200);
+    expect(config.spike.takeProfitRoePct).toBe(10);
+  } finally {
+    config.adminToken = saved.token; config.strategy = saved.strat; config.okx.leverage = saved.lev; config.spike.takeProfitRoePct = saved.tp; config.spike.stopLossRoePct = saved.sl;
+  }
+});

@@ -167,6 +167,7 @@ export class OkxVenue implements Venue {
     if (cfg?.posMode !== "net_mode") throw new Error(`okx: account is in ${cfg?.posMode}; the bot needs net_mode (one signed position per swap). Switch it in OKX settings.`);
     await this.api.signed("POST", "/api/v5/account/set-leverage", { instId: this.instId, lever: String(config.okx.leverage), mgnMode: config.okx.marginMode })
       .catch((e: OkxError) => { throw new Error(`okx set-leverage ${config.okx.leverage}x ${config.okx.marginMode}: ${e.message}. Try OKX_MARGIN_MODE=cross if isolated is not allowed for this account.`); });
+    this.lever = config.okx.leverage;
     await this.readFee();
     await this.cancelLeftovers();
     await this.cancelLeftoverStops();
@@ -213,12 +214,27 @@ export class OkxVenue implements Venue {
     if (config.okx.emergencyStopPct > 0 && !this.syncing) this.syncStop();
   }
 
+  /** The leverage set on OKX for this instrument. The setting can change while running; see syncLeverage. */
+  private lever = 1;
+
+  /**
+   * Before opening from flat: set OKX to the leverage in the settings, if it changed. Not while a position is open
+   * (on OKX an isolated position has one leverage, and changing it would move that position's margin).
+   */
+  private async syncLeverage() {
+    if (this.lever === config.okx.leverage || this.posContracts !== 0) return;
+    await this.api.signed("POST", "/api/v5/account/set-leverage", { instId: this.instId, lever: String(config.okx.leverage), mgnMode: config.okx.marginMode });
+    console.log(`okx leverage ${this.lever}x -> ${config.okx.leverage}x`);
+    this.lever = config.okx.leverage;
+  }
+
   /** Reducing the position needs no new margin; adding needs notional / leverage, plus a fee's worth of headroom. */
   canAfford(side: Side, size: number, book: Book) {
     const reduces = side === "buy" ? this.posContracts < 0 : this.posContracts > 0;
     if (reduces && size / this.ctVal <= Math.abs(this.posContracts)) return true;
     const price = side === "buy" ? book.bid : book.ask;
-    return this.availUsdt >= (size * price) / config.okx.leverage * 1.01;
+    const lev = this.posContracts === 0 ? config.okx.leverage : this.lever; // an open position keeps its leverage
+    return this.availUsdt >= (size * price) / lev * 1.01;
   }
 
   async readBook(): Promise<Book> {
@@ -406,6 +422,7 @@ export class OkxVenue implements Venue {
 
   /** Market order, then read it back until filled (a market order on a live book fills at once). */
   private async marketOrder(side: Side, size: number, reduceOnly: boolean): Promise<MarketFill> {
+    if (!reduceOnly) await this.syncLeverage();
     const [r] = await this.api.signed<PlaceResult[]>("POST", "/api/v5/trade/order", {
       instId: this.instId, tdMode: config.okx.marginMode, side, ordType: "market",
       sz: String(round(size / this.ctVal, 8)), clOrdId: newClOrdId(), ...(reduceOnly ? { reduceOnly: true } : {}),
