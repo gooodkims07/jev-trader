@@ -446,7 +446,7 @@ export class OkxVenue implements Venue {
   private async tradeInfo(): Promise<TradeInfo> {
     const [base, quote] = this.instId.split("-");
     const [bal, pos, orders, lim, book] = await Promise.all([
-      this.api.signed<{ details: { ccy: string; availBal: string }[] }[]>("GET", "/api/v5/account/balance", { ccy: "USDT" }),
+      this.api.signed<{ details: { ccy: string; availBal: string; eq: string }[] }[]>("GET", "/api/v5/account/balance", { ccy: "USDT" }),
       this.api.signed<{ instId: string; pos: string; avgPx: string }[]>("GET", "/api/v5/account/positions", { instId: this.instId }),
       this.api.signed<{ ordId: string; clOrdId: string; side: Side; ordType: string; px: string; sz: string; accFillSz: string; reduceOnly: string; cTime: string }[]>("GET", "/api/v5/trade/orders-pending", { instType: "SWAP", instId: this.instId }),
       this.api.public<{ buyLmt: string; sellLmt: string }[]>("/api/v5/public/price-limit", { instId: this.instId }).catch(() => []),
@@ -457,9 +457,10 @@ export class OkxVenue implements Venue {
       this.mmrCache = Number(tiers.find((t) => t.tier === "1")?.mmr ?? 0.005);
     }
     const p = pos.find((x) => x.instId === this.instId && Number(x.pos) !== 0);
-    this.availUsdt = Number(bal[0]?.details.find((d) => d.ccy === "USDT")?.availBal ?? this.availUsdt);
+    const usdt = bal[0]?.details.find((d) => d.ccy === "USDT");
+    this.availUsdt = Number(usdt?.availBal ?? this.availUsdt);
     return {
-      available: this.availUsdt, leverage: config.okx.leverage, marginMode: config.okx.marginMode,
+      available: this.availUsdt, equity: Number(usdt?.eq ?? this.availUsdt), maxMarginPct: config.risk.manualMaxMarginPct, leverage: config.okx.leverage, marginMode: config.okx.marginMode,
       lot: round(this.lotSz * this.ctVal, 10), min: round(this.minSz * this.ctVal, 10), tick: 10 ** -this.tickDec, mmr: this.mmrCache,
       limits: lim[0] ? { buy: Number(lim[0].buyLmt), sell: Number(lim[0].sellLmt) } : null,
       bid: book.bid, ask: book.ask,

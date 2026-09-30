@@ -66,7 +66,10 @@ export default function TradePanel({ apiUrl, snap, pickedPrice, trade }: { apiUr
   const limitPx = bbo ? null : Number(price);
   const refFor = (side: Side) => (type === "market" || bbo || !(limitPx! > 0) ? (side === "buy" ? info.ask : info.bid) : limitPx!);
   const lotDown = (x: number) => Math.max(0, Math.floor(x / info.lot + 1e-9) * info.lot);
-  const maxOpen = lotDown((info.available * info.leverage * 0.98) / (limitPx && limitPx > 0 && type === "limit" && !bbo ? limitPx : mid));
+  // What one order may open: the balance, and the safety cap (a share of equity as margin), whichever is less.
+  const capMargin = ((info.equity ?? info.available) * (info.maxMarginPct ?? 100)) / 100;
+  const openPx = limitPx && limitPx > 0 && type === "limit" && !bbo ? limitPx : mid;
+  const maxOpen = lotDown((Math.min(info.available * 0.98, capMargin) * info.leverage) / openPx);
   const pos = info.position.size;
   const maxBuy = maxOpen + (pos < 0 ? -pos : 0), maxSell = maxOpen + (pos > 0 ? pos : 0);
   const amt = Number(amount);
@@ -95,6 +98,7 @@ export default function TradePanel({ apiUrl, snap, pickedPrice, trade }: { apiUr
   const send = async (side: Side) => {
     // Something missing: say what (the buttons stay clickable, a greyed-out one looks broken).
     if (missing) { setConfirm(null); setMsg({ ok: false, text: t(missing) }); return; }
+    if (overCap(side)) { setConfirm(null); setMsg({ ok: false, text: t("trade.overCap", { pct: info.maxMarginPct, cap: capMargin.toFixed(2), n: fmtAmt(side === "buy" ? maxBuy : maxSell) }) }); return; }
     if (confirm !== side) { setConfirm(side); setMsg(null); return; } // first click: arm; the second sends
     setConfirm(null); setBusy(true); setMsg(null);
     const body: Record<string, unknown> = { side, type, size: amt, reduceOnly };
@@ -121,6 +125,9 @@ export default function TradePanel({ apiUrl, snap, pickedPrice, trade }: { apiUr
     } catch { setMsg({ ok: false, text: t("trade.failed") }); }
   };
 
+  const pos0 = info.position.size;
+  const openingFor = (side: Side) => Math.max(0, amt - ((side === "buy" ? pos0 < 0 : pos0 > 0) ? Math.abs(pos0) : 0));
+  const overCap = (side: Side) => !reduceOnly && (openingFor(side) * refFor(side)) / info.leverage > capMargin + 1e-9;
   const missing = !(amt > 0) ? "trade.needAmount" : type === "limit" && !bbo && !(Number(price) > 0) ? "trade.needPrice" : tpsl && !reduceOnly && !(tpN > 0 && slN > 0) ? "trade.needExits" : null;
   const kind = t(type === "market" ? "trade.market" : "trade.limit");
   const button = (side: Side) => (
@@ -171,6 +178,7 @@ export default function TradePanel({ apiUrl, snap, pickedPrice, trade }: { apiUr
         ))}
       </div>
       <div className={styles.kv}><span>{t("trade.available")}</span><b>{info.available.toFixed(2)} USDT</b></div>
+      <div className={styles.kv}><span>{t("trade.cap")}</span><b>{t("trade.capIs", { pct: info.maxMarginPct, cap: capMargin.toFixed(2) })}</b></div>
       <div className={styles.kv}><span>{t("trade.maxBuy")} <b>{fmtAmt(maxBuy)}</b></span><span>{t("trade.maxSell")} <b>{fmtAmt(maxSell)}</b></span></div>
 
       <label className={styles.check}><input type="checkbox" checked={reduceOnly} onChange={(e) => setReduceOnly(e.target.checked)} /> {t("trade.reduceOnly")}</label>

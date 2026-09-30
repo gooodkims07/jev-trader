@@ -136,5 +136,7 @@ export const config = {
     sessionTakeProfit: Number(env("RISK_SESSION_TAKE_PROFIT", "0")),
     positionStopPct: Number(env("RISK_POSITION_STOP_PCT", "0")),
     positionTakePct: Number(env("RISK_POSITION_TAKE_PCT", "0")),
+    /** Hand orders from the dashboard: the margin one order may open, as a share of the account's equity (%). */
+    manualMaxMarginPct: Number(env("RISK_MANUAL_MAX_MARGIN_PCT", "50")),
   },
 };

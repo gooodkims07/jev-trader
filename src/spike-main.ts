@@ -57,6 +57,16 @@ export async function runSpike(venue: Venue) {
         if (type === "limit" && !b.bbo && !(price! > 0)) return refuse("a limit order needs a price");
         if ((tpPct !== null || slPct !== null) && !(tpPct! > 0 && tpPct! <= 50 && slPct! > 0 && slPct! <= 50)) return refuse("take-profit and stop must both be between 0 and 50%");
         try {
+          // Safety: the margin the order opens (the part beyond closing the position) may use at most
+          // RISK_MANUAL_MAX_MARGIN_PCT of the equity.
+          if (!b.reduceOnly) {
+            const info = await venue.manual!.info();
+            const px = type === "limit" && !b.bbo ? price! : side === "buy" ? info.ask : info.bid;
+            const pos = info.position.size, closing = (side === "buy" ? pos < 0 : pos > 0) ? Math.abs(pos) : 0;
+            const margin = (Math.max(0, size - closing) * px) / info.leverage;
+            const cap = (info.equity * info.maxMarginPct) / 100;
+            if (margin > cap + 1e-9) return refuse(`margin ${margin.toFixed(2)} USDT is over the limit: ${info.maxMarginPct}% of equity = ${cap.toFixed(2)} USDT (max about ${Math.floor((cap * info.leverage) / px + closing)} ${venue.info.base})`);
+          }
           const r = await venue.manual!.place({ side, type, price, bbo: !!b.bbo, size, reduceOnly: !!b.reduceOnly });
           if (tpPct !== null && slPct !== null && !b.reduceOnly) trader.noteManualExits(r.ordId, tpPct, slPct);
           return { status: 200, body: r };

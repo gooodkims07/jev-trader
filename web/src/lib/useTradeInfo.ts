@@ -6,7 +6,7 @@ export type TradeSide = "buy" | "sell";
 export interface OpenOrder { ordId: string; side: TradeSide; type: string; price: number; size: number; filled: number; reduceOnly: boolean; ts: number; manual: boolean }
 /** GET /trade (live OKX, admin token): balance, sizing rules, price band, the position and resting orders. */
 export interface TradeInfo {
-  available: number; leverage: number; marginMode: string; lot: number; min: number; tick: number; mmr: number;
+  available: number; equity: number; maxMarginPct: number; leverage: number; marginMode: string; lot: number; min: number; tick: number; mmr: number;
   limits: { buy: number; sell: number } | null; bid: number; ask: number;
   position: { size: number; avgPx: number }; orders: OpenOrder[];
 }

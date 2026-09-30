@@ -56,6 +56,7 @@ const DEFS: Def[] = [
   { key: "minSideProb", group: "mm", min: 0, max: 1, step: 0.05, unit: "", get: () => config.minSideProb, set: (v) => { config.minSideProb = v; }, strategies: ["mm"] },
   { key: "risk.sessionStopLoss", group: "risk", min: 0, max: 1e6, step: 0.5, unit: "quote", get: () => config.risk.sessionStopLoss, set: (v) => { config.risk.sessionStopLoss = v; }, strategies: ["mm", "spike"] },
   { key: "risk.sessionTakeProfit", group: "risk", min: 0, max: 1e6, step: 0.5, unit: "quote", get: () => config.risk.sessionTakeProfit, set: (v) => { config.risk.sessionTakeProfit = v; }, strategies: ["mm", "spike"] },
+  { key: "risk.manualMaxMarginPct", group: "risk", min: 5, max: 100, step: 5, unit: "%", get: () => config.risk.manualMaxMarginPct, set: (v) => { config.risk.manualMaxMarginPct = v; }, strategies: ["spike"], venues: ["okx"] },
   { key: "risk.positionStopPct", group: "risk", min: 0, max: 100, step: 0.5, unit: "%", get: () => config.risk.positionStopPct, set: (v) => { config.risk.positionStopPct = v; }, strategies: ["mm"] },
   { key: "risk.positionTakePct", group: "risk", min: 0, max: 1000, step: 0.5, unit: "%", get: () => config.risk.positionTakePct, set: (v) => { config.risk.positionTakePct = v; }, strategies: ["mm"] },
   { key: "okx.emergencyStopPct", group: "risk", min: 0, max: 100, step: 0.5, unit: "%", get: () => config.okx.emergencyStopPct, set: (v) => { config.okx.emergencyStopPct = v; }, strategies: ["mm"], venues: ["okx"] },

@@ -135,7 +135,10 @@ export interface ManualOrder { side: Side; type: "limit" | "market"; price?: num
 export interface OpenOrder { ordId: string; side: Side; type: string; price: number; size: number; filled: number; reduceOnly: boolean; ts: number; manual: boolean }
 /** What the dashboard's order panel needs: balance, sizing rules, price limits, the position and resting orders. */
 export interface TradeInfo {
-  available: number; leverage: number; marginMode: string; lot: number; min: number; tick: number;
+  available: number;
+  /** The account's USDT equity, and the share of it one hand order may use as margin (%). */
+  equity: number; maxMarginPct: number;
+  leverage: number; marginMode: string; lot: number; min: number; tick: number;
   /** Tier-1 maintenance margin rate, for the estimated liquidation price. */
   mmr: number;
   /** The exchange's current price band for limit orders. */
