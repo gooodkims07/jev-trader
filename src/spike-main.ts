@@ -136,8 +136,10 @@ export async function runSpike(venue: Venue) {
   const stop = async (why: string) => {
     if (stopping) process.exit(0);
     stopping = true;
-    console.log(`${why}: closing Jev's position and stopping`);
-    await trader.shutdown().catch((e) => console.error(`shutdown: ${(e as Error).message}`));
+    // After a session limit a manual position stays (only Jev's own P&L counts toward the limits).
+    const keepManual = why.startsWith("session-");
+    console.log(`${why}: closing Jev's position${keepManual ? " (a manual one stays)" : ""} and stopping`);
+    await trader.shutdown({ keepManual }).catch((e) => console.error(`shutdown: ${(e as Error).message}`));
     await venue.shutdown?.().catch(() => {});
     process.exit(0);
   };

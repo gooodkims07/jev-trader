@@ -345,6 +345,23 @@ test("applyExits with prices: moves the take-profit and stop to them, refusing o
   } finally { reset(); }
 });
 
+test("session limits: a manual position does not count, and is not closed when a limit stops the bot", async () => {
+  try {
+    config.tradeSize = 5; config.okx.leverage = 5; config.risk.sessionStopLoss = 0.2;
+    const f = liveVenue(); const halts: string[] = [];
+    const t = new SpikeTrader(f.v, says("hold"), () => {});
+    t.onHalt = (r) => halts.push(r);
+    f.ex.pos = 50; f.ex.avg = 2; // opened by hand
+    let b = await settle(t, 19000);
+    expect(t.snapshot().open.find((o) => o.who === "jev")).toMatchObject({ size: 50, manual: true });
+    f.setMid(2 * 0.97); await t.onBlock(b++); await t.onBlock(b++); // -3% on 50 = -3 USDT, far past the 0.2 stop
+    expect(halts).toEqual([]);
+    await t.shutdown({ keepManual: true });
+    expect(f.ex.pos).toBe(50); // left open
+    expect(f.ex.orders.length).toBe(0);
+  } finally { reset(); }
+});
+
 test("live and dry-run records are kept apart: each mode loads only its own", async () => {
   const f = liveVenue();
   const live = new SpikeTrader(f.v, says("hold"), () => {});

@@ -237,6 +237,7 @@ export class SpikeTrader {
       if (!line.trim()) continue;
       try { const r = JSON.parse(line); if (!mine(r)) continue; if (r.type === "spike") this.spikeRows.push(r); else if (r.type === "trade") this.tradeRows.push(r); } catch {}
     }
+    this.sessionFrom = this.tradeRows.length;
   }
 
   /** For GET /spike: plan, how close the market is to a spike, open positions, and Jev vs the rules. */
@@ -344,13 +345,15 @@ export class SpikeTrader {
 
       this.trendStep(book, block);
 
-      // Live: the session stop and take-profit (RISK_SESSION_*) close Jev's position and end the run.
+      // Live: the session stop and take-profit (RISK_SESSION_*) close Jev's own position and end the run. A manual
+      // position stays open with its exits on the exchange.
       const halt = this.exec ? this.sessionLimit(book) : null;
       if (halt) {
+        const pnl = this.sessionPnl(book);
         const o = this.open.get("jev");
-        if (o) { const res = await this.liveClose(o, block, halt); ({ quote, fill } = res); }
+        if (o && !o.manual) { const res = await this.liveClose(o, block, halt); ({ quote, fill } = res); }
         this.halted = true;
-        note = `${halt}: session P&L ${this.sessionPnl(book).toFixed(4)} ${this.venue.info.quoteCcy}, position closed, stopping`;
+        note = `${halt}: session P&L ${pnl.toFixed(4)} ${this.venue.info.quoteCcy}, ${o ? (o.manual ? "manual position left open with its exits" : "position closed") : "flat"}, stopping`;
         this.emit(block, book, null, quote, fill, note);
         this.onHalt(halt);
         return;
@@ -530,15 +533,17 @@ export class SpikeTrader {
   }
 
   /** On shutdown: never leave a live position behind. Closes Jev's at market (reason "shutdown") and the shadows. */
-  async shutdown() {
+  /** keepManual (after a session limit): leave a manual position open, with its exits on the exchange. */
+  async shutdown(opts: { keepManual?: boolean } = {}) {
     this.halted = true;
-    await this.closeAll("shutdown");
+    await this.closeAll("shutdown", opts.keepManual);
   }
 
-  private async closeAll(reason: string) {
+  private async closeAll(reason: string, keepManual = false) {
     if (!this.open.size) return;
     const book = await this.venue.readBook();
     for (const o of [...this.open.values()]) {
+      if (keepManual && o.who === "jev" && o.manual) { console.log(`${reason}: manual ${o.side === "buy" ? "long" : "short"} of ${o.size} left open, its exits stay on the exchange`); continue; }
       if (o.who === "jev" && this.exec) await this.liveClose(o, this.lastBlock, reason).catch((e) => console.error(`close on ${reason} failed: ${(e as Error).message}. Close it on OKX.`));
       else this.close(o, book, this.lastBlock, reason);
     }
@@ -546,10 +551,19 @@ export class SpikeTrader {
 
   // ---- live execution (Jev only; the fade and follow shadows stay simulated) ----
 
-  /** P&L of this run for Jev, at mid: closed trades (fees included) and the open position. */
+  /** Rows loaded from earlier runs: the session limits count only the trades this run closes (the ones after). */
+  private sessionFrom = 0;
+
+  /**
+   * P&L of this run for the session limits, at mid: Jev's own closed trades (fees included) and its open position.
+   * Manual ones (taken over from the OKX app or the dashboard, or added to by hand) do not count: they keep their
+   * own take-profit and stop, and a session limit never closes them.
+   */
   private sessionPnl(book: Book) {
+    const closed = this.tradeRows.slice(this.sessionFrom).filter((r) => r.who === "jev" && !isManual(r)).reduce((a, r) => a + r.pnlUsd, 0);
     const o = this.open.get("jev");
-    return this.realized + (o ? (o.side === "buy" ? 1 : -1) * (book.mid - o.entry) * o.size : 0);
+    const open = o && !o.manual ? (o.side === "buy" ? 1 : -1) * (book.mid - o.entry) * o.size - (o.entryFees ?? 0) : 0;
+    return closed + open;
   }
 
   private sessionLimit(book: Book): string | null {
