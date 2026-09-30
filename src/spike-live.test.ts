@@ -362,6 +362,31 @@ test("session limits: a manual position does not count, and is not closed when a
   } finally { reset(); }
 });
 
+test("manual part: no time limit; exits moved by hand survive adds", async () => {
+  const saved = config.spike.maxHoldMin;
+  try {
+    config.tradeSize = 5; config.okx.leverage = 5; config.risk.sessionStopLoss = 0; config.spike.maxHoldMin = 1;
+    const f = liveVenue();
+    const t = new SpikeTrader(f.v, says("buy"), () => {});
+    let b = await openLong(t, f, 20000);
+    const mid = 2 * 0.994;
+    await t.onBlock(b++);
+    await t.applyExits({ tp: mid * 1.05, sl: mid * 0.97 }); // dragged on the chart
+    // More bought by hand: joins the position; the dragged exits stay.
+    f.ex.pos = 15; f.ex.avg = mid * 0.999;
+    b = await settle(t, b);
+    let o = t.snapshot().open.find((x) => x.who === "jev")!;
+    expect(o).toMatchObject({ size: 15, manual: true });
+    expect(o.tp).toBeCloseTo(mid * 1.05, 9);
+    expect(o.sl).toBeCloseTo(mid * 0.97, 9);
+    // Past the 1 minute limit: not closed (it has a manual part).
+    for (let i = 0; i < 70; i++) await t.onBlock(b++);
+    o = t.snapshot().open.find((x) => x.who === "jev")!;
+    expect(o).toBeDefined();
+    expect(f.ex.orders.filter((x) => x.reduceOnly).length).toBe(0);
+  } finally { reset(); config.spike.maxHoldMin = saved; }
+});
+
 test("live and dry-run records are kept apart: each mode loads only its own", async () => {
   const f = liveVenue();
   const live = new SpikeTrader(f.v, says("hold"), () => {});

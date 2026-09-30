@@ -146,8 +146,11 @@ type Who = "jev" | "fade" | "follow" | "trend";
  * favour), from the mid at each tick. manual: opened outside the bot (taken over) or added to by hand.
  */
 /** peak: the trend shadow's best mid since entry, for its trailing stop. */
-/** lev: the leverage the position opened with (it keeps it if the setting changes). */
-interface Open { lev?: number; peak?: number; who: Who; side: Side; entry: number; size: number; adds: number; openedAt: number; spikeBlock: number; tp: number; sl: number; openedTs?: number; exitsOnExchange?: boolean; entryFees?: number; mfe?: number; mae?: number; manual?: boolean }
+/**
+ * lev: the leverage the position opened with (it keeps it if the setting changes). tpSet / slSet: that exit was
+ * moved by hand (a line dragged on the chart), so adds keep it instead of recomputing it from the settings.
+ */
+interface Open { tpSet?: boolean; slSet?: boolean; lev?: number; peak?: number; who: Who; side: Side; entry: number; size: number; adds: number; openedAt: number; spikeBlock: number; tp: number; sl: number; openedTs?: number; exitsOnExchange?: boolean; entryFees?: number; mfe?: number; mae?: number; manual?: boolean }
 /** What a spike did to one strategy's position. */
 type Effect = "open" | "add" | "reverse" | "hold" | "out" | "not-asked" | "observed";
 
@@ -479,11 +482,12 @@ export class SpikeTrader {
         const mid = this.lastMid;
         if (at.tp !== undefined && !(dir * (at.tp - mid) > 0)) throw new Error(`take-profit ${at.tp} must be ${dir > 0 ? "above" : "below"} the price now (${mid})`);
         if (at.sl !== undefined && !(dir * (mid - at.sl) > 0)) throw new Error(`stop ${at.sl} must be ${dir > 0 ? "below" : "above"} the price now (${mid})`);
-        if (at.tp !== undefined) o.tp = at.tp;
-        if (at.sl !== undefined) o.sl = at.sl;
+        if (at.tp !== undefined) { o.tp = at.tp; o.tpSet = true; }
+        if (at.sl !== undefined) { o.sl = at.sl; o.slSet = true; }
       } else {
         o.tp = o.entry * (1 + (dir * this.tpPct) / 100);
         o.sl = o.entry * (1 - (dir * this.slPct) / 100);
+        o.tpSet = o.slSet = false; // back to the settings'
       }
       if (this.exec) o.exitsOnExchange = await this.exec.setExits({ side: o.side, tp: o.tp, sl: o.sl });
       console.log(`spike: exits of the open ${o.side === "buy" ? "long" : "short"} moved to take-profit ${o.tp} / stop ${o.sl}`);
@@ -614,8 +618,9 @@ export class SpikeTrader {
     o.size = Math.abs(pos.size) || o.size + r.size;
     o.adds++;
     o.entryFees = (o.entryFees ?? 0) + r.fee;
-    o.tp = o.entry * (1 + (dir * this.tpPct) / 100);
-    o.sl = o.entry * (1 - (dir * this.slPct) / 100);
+    // The settings' levels from the new entry, except an exit moved by hand, which stays where it was put.
+    if (!o.tpSet) o.tp = o.entry * (1 + (dir * this.tpPct) / 100);
+    if (!o.slSet) o.sl = o.entry * (1 - (dir * this.slPct) / 100);
     this.feesUsd += r.fee; this.realized -= r.fee;
     o.exitsOnExchange = await this.exec!.setExits({ side: o.side, tp: o.tp, sl: o.sl });
     return this.orderEvent(o.side, r.avgPx, r.size, r.fee, r.ordId, block);
@@ -638,6 +643,8 @@ export class SpikeTrader {
    */
   private async liveExit(o: Open, book: Book, block: number) {
     const r = this.exitReason(o, book, block);
+    // A position with a manual part (taken over, or added to by hand) has no time limit: only its exits end it.
+    if (r === "time" && o.manual) return null;
     if (!r || (r !== "time" && o.exitsOnExchange)) return null;
     const res = await this.liveClose(o, block, r);
     return { ...res, reason: r };
@@ -691,7 +698,10 @@ export class SpikeTrader {
       o.entry = pos.avgPx || o.entry;
       o.manual = true; // part of it is no longer Jev's
       o.entryFees = (o.entryFees ?? 0) + f.fee;
-      ({ tp: o.tp, sl: o.sl } = this.levels(o.side, o.entry, this.exitsFor(f.ordIds)));
+      // Exits given with the order win; else an exit moved by hand stays; else the settings' from the new entry.
+      const given = this.exitsFor(f.ordIds), lv = this.levels(o.side, o.entry, given);
+      if (given) { o.tp = lv.tp; o.sl = lv.sl; o.tpSet = o.slSet = false; }
+      else { if (!o.tpSet) o.tp = lv.tp; if (!o.slSet) o.sl = lv.sl; }
       this.feesUsd += f.fee; this.realized -= f.fee;
       o.exitsOnExchange = await exec.setExits({ side: o.side, tp: o.tp, sl: o.sl });
       console.log(`spike: ${qty} ${this.venue.info.base} added outside the bot; position now ${o.size} at ${o.entry}`);

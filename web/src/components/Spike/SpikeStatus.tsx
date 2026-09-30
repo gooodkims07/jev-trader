@@ -211,7 +211,7 @@ export default function SpikeStatus({ snap, apiUrl }: { snap: SpikeSnapshot | nu
               </div>
             ) : null}
             <div className={styles.timeLeft}>
-              {t("spike.timeLeft")} <b>{plan ? t("spike.min", { n: Math.max(0, Math.round(plan.maxHoldMin - jev.heldMin)) }) : "-"}</b>
+              {t("spike.timeLeft")} <b>{jev.manual ? t("spike.noTimeLimit") : plan ? t("spike.min", { n: Math.max(0, Math.round(plan.maxHoldMin - jev.heldMin)) }) : "-"}</b>
               {jev.mfePct != null && jev.maePct != null ? (
                 <span style={{ marginLeft: 14 }}>
                   {t("spike.best")} <b className={jev.mfePct >= 0 ? styles.pos : styles.neg}>{sign(jev.mfePct, 2)}%</b>
