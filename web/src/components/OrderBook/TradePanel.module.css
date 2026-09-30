@@ -265,3 +265,36 @@
   border-radius: 8px;
   padding: 5px 8px;
 }
+
+/* amount slider: 0 to 100% of what may be opened, or of the position held (reduce-only) */
+.slider {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.slider input[type="range"] {
+  width: 100%;
+  accent-color: var(--ink);
+  margin: 4px 0 0;
+}
+
+.sliderMarks {
+  display: flex;
+  justify-content: space-between;
+}
+
+.sliderMarks button {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 0;
+  font: 500 10.5px var(--font-mono), monospace;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.sliderMarks .markOn {
+  color: var(--ink);
+  font-weight: 700;
+}

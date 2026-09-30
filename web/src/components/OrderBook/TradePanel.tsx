@@ -74,7 +74,14 @@ export default function TradePanel({ apiUrl, snap, pickedPrice, trade }: { apiUr
   const maxBuy = maxOpen + (pos < 0 ? -pos : 0), maxSell = maxOpen + (pos > 0 ? pos : 0);
   const amt = Number(amount);
   const fmtAmt = (x: number) => String(+x.toFixed(6));
-  const setByPct = (p: number) => { setPct(p); setAmount(p ? fmtAmt(lotDown((maxOpen * p) / 100)) : ""); };
+  // The slider's 100%: what may be opened, or with reduce-only the position held (100% = all of it, exactly).
+  const held = Math.abs(info.position.size);
+  const amountAt = (p: number, ro: boolean) => {
+    if (!p) return "";
+    if (ro) return held ? fmtAmt(p === 100 ? held : Math.min(held, Math.max(info.lot, lotDown((held * p) / 100)))) : "";
+    return fmtAmt(lotDown((maxOpen * p) / 100));
+  };
+  const setByPct = (p: number) => { setPct(p); setAmount(amountAt(p, reduceOnly)); };
   const feeRate = type === "market" ? TAKER : MAKER;
   const cost = (side: Side) => (amt > 0 ? (amt * refFor(side)) / info.leverage + amt * refFor(side) * feeRate : null);
   const liq = (side: Side) => {
@@ -172,16 +179,20 @@ export default function TradePanel({ apiUrl, snap, pickedPrice, trade }: { apiUr
 
       <div className={styles.label}>{t("trade.amount", { base: venue.base })}</div>
       <input className={styles.input} inputMode="decimal" value={amount} placeholder={t("trade.minLot", { n: fmtAmt(info.min), lot: fmtAmt(info.lot) })} onChange={(e) => { setAmount(e.target.value); setPct(0); }} aria-label={t("trade.amount", { base: venue.base })} />
-      <div className={styles.pcts}>
-        {[0, 25, 50, 75, 100].map((p) => (
-          <button key={p} type="button" className={p === pct && (p > 0 || !amount) ? styles.pctOn : undefined} onClick={() => setByPct(p)}>{p}%</button>
-        ))}
+      <div className={styles.slider}>
+        <input type="range" min={0} max={100} step={25} value={pct} onChange={(e) => setByPct(Number(e.target.value))} aria-label={t(reduceOnly ? "trade.pctOfHeld" : "trade.pctOfMax")} />
+        <div className={styles.sliderMarks}>
+          {[0, 25, 50, 75, 100].map((p) => (
+            <button key={p} type="button" className={p === pct && (p > 0 || !amount) ? styles.markOn : undefined} onClick={() => setByPct(p)}>{p}%</button>
+          ))}
+        </div>
+        <div className={styles.note}>{reduceOnly ? (held ? t("trade.pctOfHeldIs", { n: fmtAmt(held), side: t(info.position.size > 0 ? "trade.long" : "trade.short") }) : t("trade.noHeld")) : t("trade.pctOfMax")}</div>
       </div>
       <div className={styles.kv}><span>{t("trade.available")}</span><b>{info.available.toFixed(2)} USDT</b></div>
       <div className={styles.kv}><span>{t("trade.cap")}</span><b>{t("trade.capIs", { pct: info.maxMarginPct, cap: capMargin.toFixed(2) })}</b></div>
       <div className={styles.kv}><span>{t("trade.maxBuy")} <b>{fmtAmt(maxBuy)}</b></span><span>{t("trade.maxSell")} <b>{fmtAmt(maxSell)}</b></span></div>
 
-      <label className={styles.check}><input type="checkbox" checked={reduceOnly} onChange={(e) => setReduceOnly(e.target.checked)} /> {t("trade.reduceOnly")}</label>
+      <label className={styles.check}><input type="checkbox" checked={reduceOnly} onChange={(e) => { const ro = e.target.checked; setReduceOnly(ro); if (pct) setAmount(amountAt(pct, ro)); }} /> {t("trade.reduceOnly")}</label>
       <label className={styles.check}><input type="checkbox" checked={tpsl} disabled={reduceOnly} onChange={(e) => setTpsl(e.target.checked)} /> {t("trade.tpsl")}</label>
       {tpsl && !reduceOnly ? (
         <div className={styles.tpsl}>
