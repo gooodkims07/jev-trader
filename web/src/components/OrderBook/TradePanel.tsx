@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { SpikeSnapshot } from "@/lib/types";
 import { useLang } from "@/lib/i18n";
 import { useVenue } from "@/lib/venue";
@@ -36,9 +36,11 @@ export default function TradePanel({ apiUrl, snap, pickedPrice, trade }: { apiUr
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
-  // A price clicked in the order book fills the limit price.
+  // A price clicked in the order book fills the limit price, once per click.
+  const pickedAt = useRef(0);
   useEffect(() => {
-    if (!pickedPrice) return;
+    if (!pickedPrice || pickedPrice.at === pickedAt.current) return;
+    pickedAt.current = pickedPrice.at;
     setType("limit"); setBbo(false); setPrice(pickedPrice.price.toFixed(venue.priceDecimals));
   }, [pickedPrice, venue.priceDecimals]);
 
@@ -91,6 +93,8 @@ export default function TradePanel({ apiUrl, snap, pickedPrice, trade }: { apiUr
   const sideWord = (side: Side, ro: boolean) => t(ro ? (side === "buy" ? "trade.buyRo" : "trade.sellRo") : side === "buy" ? "trade.long" : "trade.short");
 
   const send = async (side: Side) => {
+    // Something missing: say what (the buttons stay clickable, a greyed-out one looks broken).
+    if (missing) { setConfirm(null); setMsg({ ok: false, text: t(missing) }); return; }
     if (confirm !== side) { setConfirm(side); setMsg(null); return; } // first click: arm; the second sends
     setConfirm(null); setBusy(true); setMsg(null);
     const body: Record<string, unknown> = { side, type, size: amt, reduceOnly };
@@ -117,10 +121,10 @@ export default function TradePanel({ apiUrl, snap, pickedPrice, trade }: { apiUr
     } catch { setMsg({ ok: false, text: t("trade.failed") }); }
   };
 
-  const invalid = !(amt > 0) || (type === "limit" && !bbo && !(Number(price) > 0)) || (tpsl && !reduceOnly && !(tpN > 0 && slN > 0)) || busy;
+  const missing = !(amt > 0) ? "trade.needAmount" : type === "limit" && !bbo && !(Number(price) > 0) ? "trade.needPrice" : tpsl && !reduceOnly && !(tpN > 0 && slN > 0) ? "trade.needExits" : null;
   const kind = t(type === "market" ? "trade.market" : "trade.limit");
   const button = (side: Side) => (
-    <button type="button" className={side === "buy" ? styles.buy : styles.sell} disabled={invalid} onClick={() => send(side)}>
+    <button type="button" className={side === "buy" ? styles.buy : styles.sell} disabled={busy} onClick={() => send(side)}>
       {confirm === side ? t("trade.confirm", { side: sideWord(side, reduceOnly), n: fmtAmt(amt), base: venue.base, kind }) : t(reduceOnly ? (side === "buy" ? "trade.buyRo" : "trade.sellRo") : side === "buy" ? "trade.buyLong" : "trade.sellShort")}
     </button>
   );
@@ -190,7 +194,7 @@ export default function TradePanel({ apiUrl, snap, pickedPrice, trade }: { apiUr
       {confirm ? <div className={styles.confirmHint}>{t("trade.confirmHint")}</div> : null}
       {busy ? <div className={styles.note}>{t("trade.sending")}</div> : null}
       {msg ? <div className={msg.ok ? styles.ok : styles.bad}>{msg.text}</div> : null}
-      {invalid && !busy && !msg ? <div className={styles.note}>{t(!(amt > 0) ? "trade.needAmount" : type === "limit" && !bbo && !(Number(price) > 0) ? "trade.needPrice" : "trade.needExits")}</div> : null}
+
       <div className={styles.metas}>{side2("buy")}{side2("sell")}</div>
 
       <div className={styles.section}>

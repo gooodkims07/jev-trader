@@ -130,7 +130,11 @@ export default function OrderBook({ apiUrl, snap, trade }: { apiUrl: string; sna
           {steps.map((s) => <option key={s} value={s}>{s.toFixed(Math.max(0, Math.round(-Math.log10(s))))}</option>)}
         </select>}
       </div>
-      {tab === "trade" ? <TradePanel apiUrl={apiUrl} snap={snap} pickedPrice={picked} trade={trade} /> : <>
+      {/* Both stay mounted, so the order form keeps what was typed while the book is shown. */}
+      <div className={styles.pane} style={tab === "trade" ? undefined : { display: "none" }}>
+        <TradePanel apiUrl={apiUrl} snap={snap} pickedPrice={picked} trade={trade} />
+      </div>
+      <div className={styles.pane} style={tab === "book" ? undefined : { display: "none" }}>
       <div className={styles.views} role="group" aria-label={t("book.view")}>
         {(["both", "bids", "asks"] as View[]).map((v) => (
           <button key={v} type="button" className={v === view ? styles.viewOn : undefined} aria-pressed={v === view} onClick={() => setView(v)}>{t(`book.${v}`)}</button>
@@ -170,7 +174,7 @@ export default function OrderBook({ apiUrl, snap, trade }: { apiUrl: string; sna
           <span className={styles.ratioS}>S</span>
         </div>
       ) : null}
-      </>}
+      </div>
     </div>
   );
 }
