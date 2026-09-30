@@ -361,3 +361,11 @@
 .zoom .zoomGapBtn {
   margin-left: 8px;
 }
+
+/* order / position lines (OKX) */
+.levelLabel {
+  font: 500 10.5px var(--font-mono), monospace;
+  paint-order: stroke;
+  stroke: var(--panel);
+  stroke-width: 3px;
+}

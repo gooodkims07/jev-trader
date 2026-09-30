@@ -15,6 +15,8 @@ import { VenueProvider } from "@/lib/venue";
 import { LangProvider } from "@/lib/i18n";
 import SettingsPanel from "@/components/Settings/SettingsPanel";
 import OrderBook from "@/components/OrderBook/OrderBook";
+import { useTradeInfo } from "@/lib/useTradeInfo";
+import type { ChartLevel } from "@/components/FlowChart/FlowChart";
 import { useState } from "react";
 import styles from "./page.module.css";
 
@@ -25,6 +27,17 @@ export default function Page() {
   const spikeMode = feed.meta?.strategy === "spike";
   const spike = useSpike(API_URL, spikeMode);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const trade = useTradeInfo(API_URL, spikeMode && feed.meta?.venue?.name === "okx" && !feed.meta?.dryRun);
+  // Lines on the chart: resting orders, and Jev's position (entry, take-profit, stop).
+  const jevOpen = spike?.open.find((o) => o.who === "jev");
+  const levels: ChartLevel[] = [
+    ...(trade.info?.orders ?? []).filter((o) => o.price > 0).map((o) => ({ key: o.ordId, price: o.price, kind: o.side, size: o.size - o.filled })),
+    ...(jevOpen ? [
+      { key: "entry", price: jevOpen.entry, kind: "entry" as const, size: jevOpen.size ?? 0, side: jevOpen.side },
+      { key: "tp", price: jevOpen.tp, kind: "tp" as const },
+      { key: "sl", price: jevOpen.sl, kind: "sl" as const },
+    ] : []),
+  ];
   // Kuru is the public demo: English, no controls. OKX: Korean by default, with settings.
   const isKuru = !feed.meta?.venue || feed.meta.venue.name === "kuru";
 
@@ -41,10 +54,10 @@ export default function Page() {
             // OKX spike: the order book beside the chart.
             <div className={`${styles.chartWrap} ${styles.chartWrapControls} ${styles.chartRow}`}>
               <div className={styles.chartMain}>
-                <FlowChart events={feed.events} latest={feed.latest} />
+                <FlowChart events={feed.events} latest={feed.latest} levels={levels} />
               </div>
               <div className={styles.bookCol}>
-                <OrderBook apiUrl={API_URL} snap={spike} />
+                <OrderBook apiUrl={API_URL} snap={spike} trade={trade} />
               </div>
             </div>
           ) : (

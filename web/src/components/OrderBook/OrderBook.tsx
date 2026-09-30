@@ -5,6 +5,7 @@ import { useLang } from "@/lib/i18n";
 import { useVenue } from "@/lib/venue";
 import type { SpikeSnapshot } from "@/lib/types";
 import TradePanel from "./TradePanel";
+import type { TradeState } from "@/lib/useTradeInfo";
 import styles from "./OrderBook.module.css";
 
 type Level = [number, number];
@@ -39,7 +40,7 @@ function group(levels: Level[], step: number, side: "bid" | "ask"): Level[] {
  * OKX order book beside the chart: asks over bids, cumulative depth bars, the last trade, and the bid / ask split.
  * Its "order" tab is the hand-trading panel; a price clicked in the book goes into its limit price.
  */
-export default function OrderBook({ apiUrl, snap }: { apiUrl: string; snap: SpikeSnapshot | null }) {
+export default function OrderBook({ apiUrl, snap, trade }: { apiUrl: string; snap: SpikeSnapshot | null; trade: TradeState }) {
   const [tab, setTab] = useState<"book" | "trade">("book");
   const [picked, setPicked] = useState<{ price: number; at: number } | null>(null);
   const venue = useVenue();
@@ -129,7 +130,7 @@ export default function OrderBook({ apiUrl, snap }: { apiUrl: string; snap: Spik
           {steps.map((s) => <option key={s} value={s}>{s.toFixed(Math.max(0, Math.round(-Math.log10(s))))}</option>)}
         </select>}
       </div>
-      {tab === "trade" ? <TradePanel apiUrl={apiUrl} snap={snap} pickedPrice={picked} /> : <>
+      {tab === "trade" ? <TradePanel apiUrl={apiUrl} snap={snap} pickedPrice={picked} trade={trade} /> : <>
       <div className={styles.views} role="group" aria-label={t("book.view")}>
         {(["both", "bids", "asks"] as View[]).map((v) => (
           <button key={v} type="button" className={v === view ? styles.viewOn : undefined} aria-pressed={v === view} onClick={() => setView(v)}>{t(`book.${v}`)}</button>

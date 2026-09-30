@@ -52,12 +52,24 @@ function cellFill(e: BlockEvent): string {
   return "var(--hold-cell)";
 }
 
+/** A horizontal line on the chart (OKX): a resting order, or the position's entry, take-profit and stop. */
+export interface ChartLevel { key: string; price: number; kind: "buy" | "sell" | "entry" | "tp" | "sl"; size?: number; side?: "buy" | "sell" }
+const LEVEL_STYLE: Record<ChartLevel["kind"], { colour: string; dash: string | undefined }> = {
+  buy: { colour: "var(--buy-ink)", dash: "6 4" },
+  sell: { colour: "var(--sell-ink)", dash: "6 4" },
+  entry: { colour: "var(--ink-2)", dash: undefined },
+  tp: { colour: "var(--buy-ink)", dash: "2 3" },
+  sl: { colour: "var(--sell-ink)", dash: "2 3" },
+};
+
 export default function FlowChart({
   events,
   latest,
+  levels = [],
 }: {
   events: BlockEvent[];
   latest: BlockEvent | null;
+  levels?: ChartLevel[];
 }) {
   const venue = useVenue();
   const { t } = useLang();
@@ -507,6 +519,23 @@ export default function FlowChart({
                   {t.label}
                 </text>
               ))}
+
+              {zoomable ? levels.map((lv) => {
+                // Off the price band: pinned to its edge with an arrow, so a far take-profit or stop still shows.
+                const top = model.plotTop, bottom = model.plotTop + model.plotH, raw = model.fy(lv.price);
+                const y = Math.min(Math.max(raw, top), bottom), off = raw < top ? "↑" : raw > bottom ? "↓" : "";
+                const st = LEVEL_STYLE[lv.kind];
+                const n = lv.size !== undefined ? +lv.size.toFixed(6) : 0;
+                const name = lv.kind === "buy" ? t("level.buy", { n }) : lv.kind === "sell" ? t("level.sell", { n }) : lv.kind === "entry" ? t("level.entry", { side: t(lv.side === "sell" ? "trade.short" : "trade.long"), n }) : t(lv.kind === "tp" ? "level.tp" : "level.sl");
+                return (
+                  <g key={lv.key}>
+                    {off ? null : <line x1={0} x2={w - TAG_W - 8} y1={y} y2={y} stroke={st.colour} strokeWidth={1} strokeDasharray={st.dash} opacity={0.8} />}
+                    <text className={styles.levelLabel} x={w - TAG_W - 14} textAnchor="end" y={off === "↑" ? y + 12 : y - 4} fill={st.colour}>
+                      {name} {lv.price.toFixed(venue.priceDecimals)}{off ? ` ${off}` : ""}
+                    </text>
+                  </g>
+                );
+              }) : null}
 
               <g className={styles.tag} style={{ transform: `translateY(${model.endY.toFixed(1)}px)` }}>
                 <line className={styles.guide} x1={w - ANCHOR_GAP + 8} x2={w - TAG_W - 6} y1="0" y2="0" />

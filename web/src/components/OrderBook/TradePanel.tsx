@@ -1,36 +1,28 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import type { SpikeSnapshot } from "@/lib/types";
 import { useLang } from "@/lib/i18n";
 import { useVenue } from "@/lib/venue";
+import { adminToken, type TradeSide, type TradeState } from "@/lib/useTradeInfo";
 import styles from "./TradePanel.module.css";
 
-type Side = "buy" | "sell";
-interface OpenOrder { ordId: string; side: Side; type: string; price: number; size: number; filled: number; reduceOnly: boolean; ts: number; manual: boolean }
-interface Info {
-  available: number; leverage: number; marginMode: string; lot: number; min: number; tick: number; mmr: number;
-  limits: { buy: number; sell: number } | null; bid: number; ask: number;
-  position: { size: number; avgPx: number }; orders: OpenOrder[];
-}
-
-const POLL_MS = 2000;
+type Side = TradeSide;
 const TAKER = 0.0005;
 const MAKER = 0.0002;
-
-const tokenNow = () => { try { return localStorage.getItem("jev.adminToken") ?? ""; } catch { return ""; } };
+const tokenNow = adminToken;
 
 /**
  * Orders by hand on the bot's coin (live OKX): limit or market, amount by hand or as a share of what the balance
  * allows, reduce-only, and a take-profit / stop the bot puts on the position once it fills (else the settings').
  * Two clicks to send. Resting orders below, with cancel.
  */
-export default function TradePanel({ apiUrl, snap, pickedPrice }: { apiUrl: string; snap: SpikeSnapshot | null; pickedPrice: { price: number; at: number } | null }) {
+export default function TradePanel({ apiUrl, snap, pickedPrice, trade }: { apiUrl: string; snap: SpikeSnapshot | null; pickedPrice: { price: number; at: number } | null; trade: TradeState }) {
   const venue = useVenue();
   const { t } = useLang();
   const base = apiUrl.replace(/\/+$/, "");
-  const [info, setInfo] = useState<Info | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+  const { info, reload: load } = trade;
+  const err = trade.err ? (trade.err.includes(".") && !trade.err.includes(" ") ? t(trade.err as "trade.noToken") : trade.err) : null;
   const [type, setType] = useState<"limit" | "market">("limit");
   const [price, setPrice] = useState("");
   const [bbo, setBbo] = useState(false);
@@ -43,24 +35,6 @@ export default function TradePanel({ apiUrl, snap, pickedPrice }: { apiUrl: stri
   const [confirm, setConfirm] = useState<Side | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
-
-  const load = useCallback(async () => {
-    const token = tokenNow();
-    if (!token) { setErr(t("trade.noToken")); return; }
-    try {
-      const r = await fetch(`${base}/trade`, { headers: { authorization: `Bearer ${token}` } });
-      const body = await r.json();
-      if (!r.ok) { setErr(r.status === 401 ? t("settings.unauthorized") : body.error ?? String(r.status)); return; }
-      setInfo(body as Info); setErr(null);
-    } catch { setErr(t("trade.unavailable")); }
-  }, [base, t]);
-
-  useEffect(() => {
-    let stop = false, timer: ReturnType<typeof setTimeout> | undefined;
-    const tick = async () => { if (document.visibilityState === "visible") await load(); if (!stop) timer = setTimeout(tick, POLL_MS); };
-    tick();
-    return () => { stop = true; if (timer) clearTimeout(timer); };
-  }, [load]);
 
   // A price clicked in the order book fills the limit price.
   useEffect(() => {
