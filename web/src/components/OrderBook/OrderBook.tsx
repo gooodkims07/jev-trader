@@ -12,8 +12,8 @@ type Level = [number, number];
 interface Depth { bids: Level[]; asks: Level[]; last: { price: number; side: "buy" | "sell" } | null; ts: number }
 type View = "both" | "bids" | "asks";
 
-/** Rows fetched per side: enough for a tall column and for grouping by 10 ticks. */
-const FETCH = 100;
+/** Levels fetched per side for each price step (1, 10, 100 ticks): enough to fill a tall column once grouped. */
+const FETCH: Record<number, number> = { 1: 100, 10: 400, 100: 2000 };
 const POLL_MS = 1000;
 const ROW_H = 21;
 const MID_H = 40;
@@ -26,14 +26,18 @@ function compact(n: number): string {
   return n >= 100 ? String(Math.round(n)) : String(+n.toFixed(2));
 }
 
-/** Levels merged into buckets of `step`: bids round down, asks up, so a bucket never crosses the spread. */
-function group(levels: Level[], step: number, side: "bid" | "ask"): Level[] {
+/**
+ * Levels merged into buckets of `step`: bids round down, asks up, so a bucket never crosses the spread. When the
+ * fetch was cut off (`truncated`), the deepest bucket may be missing levels beyond it, so it is dropped.
+ */
+function group(levels: Level[], step: number, side: "bid" | "ask", truncated = false): Level[] {
   const out = new Map<number, number>();
   for (const [p, s] of levels) {
     const k = side === "bid" ? Math.floor(p / step + 1e-9) : Math.ceil(p / step - 1e-9);
     out.set(k, (out.get(k) ?? 0) + s);
   }
-  return [...out].sort((a, b) => (side === "bid" ? b[0] - a[0] : a[0] - b[0])).map(([k, s]) => [k * step, s]);
+  const rows = [...out].sort((a, b) => (side === "bid" ? b[0] - a[0] : a[0] - b[0])).map(([k, s]) => [k * step, s] as Level);
+  return truncated && rows.length > 1 ? rows.slice(0, -1) : rows;
 }
 
 /**
@@ -51,6 +55,7 @@ export default function OrderBook({ apiUrl, snap, trade }: { apiUrl: string; sna
   const tick = 10 ** -venue.priceDecimals;
   const steps = [1, 10, 100].map((k) => +(tick * k).toFixed(venue.priceDecimals));
   const [step, setStep] = useState(steps[0]);
+  const fetchN = FETCH[Math.round(step / tick)] ?? 100;
   const prevLast = useRef<number | null>(null);
   const [dir, setDir] = useState<"up" | "down" | null>(null);
 
@@ -61,7 +66,7 @@ export default function OrderBook({ apiUrl, snap, trade }: { apiUrl: string; sna
     const load = async () => {
       if (document.visibilityState === "visible") {
         try {
-          const r = await fetch(`${base}/book?levels=${FETCH}`);
+          const r = await fetch(`${base}/book?levels=${fetchN}`);
           if (!r.ok) throw new Error(String(r.status));
           const d = (await r.json()) as Depth;
           if (!stop) { setDepth(d); setFailed(false); }
@@ -73,7 +78,7 @@ export default function OrderBook({ apiUrl, snap, trade }: { apiUrl: string; sna
     };
     load();
     return () => { stop = true; if (timer) clearTimeout(timer); };
-  }, [apiUrl]);
+  }, [apiUrl, fetchN]);
 
   // The last trade's direction against the one before (a price, not a blink).
   const last = depth?.last?.price ?? (depth?.bids[0] && depth?.asks[0] ? (depth.bids[0][0] + depth.asks[0][0]) / 2 : null);
@@ -98,14 +103,14 @@ export default function OrderBook({ apiUrl, snap, trade }: { apiUrl: string; sna
 
   const book = useMemo(() => {
     if (!depth) return null;
-    const bids = group(depth.bids, step, "bid").slice(0, perSide);
-    const asks = group(depth.asks, step, "ask").slice(0, perSide);
+    const bids = group(depth.bids, step, "bid", depth.bids.length >= fetchN).slice(0, perSide);
+    const asks = group(depth.asks, step, "ask", depth.asks.length >= fetchN).slice(0, perSide);
     const cum = (ls: Level[]) => { let s = 0; return ls.map(([p, a]) => ({ p, a, c: (s += a) })); };
     const b = cum(bids), a = cum(asks);
     const max = Math.max(b.at(-1)?.c ?? 0, a.at(-1)?.c ?? 0) || 1;
     const bidSum = b.at(-1)?.c ?? 0, askSum = a.at(-1)?.c ?? 0;
     return { bids: b, asks: a.reverse(), max, bidPct: bidSum + askSum ? (bidSum / (bidSum + askSum)) * 100 : 50 };
-  }, [depth, step, perSide]);
+  }, [depth, step, perSide, fetchN]);
 
   const dec = Math.max(0, Math.round(-Math.log10(step)));
   const px = (p: number) => p.toFixed(dec);
