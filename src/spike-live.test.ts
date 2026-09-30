@@ -311,6 +311,24 @@ test("leverage: an open position keeps its own for its ROE; the next one opens a
   } finally { reset(); }
 });
 
+test("hand orders: the take-profit and stop given with a dashboard order are used when the sync takes its fill over", async () => {
+  try {
+    config.tradeSize = 5; config.okx.leverage = 5; config.risk.sessionStopLoss = 0;
+    const f = liveVenue();
+    const t = new SpikeTrader(f.v, says("hold"), () => {});
+    t.noteManualExits("man1", 2, 0.5);
+    f.ex.pos = -8; f.ex.avg = 2;
+    f.ex.fills = [{ px: 2, size: 8, fee: 0.008, ts: Date.now(), id: "h1", ordId: "man1", side: "sell" } as never];
+    await settle(t, 17000);
+    const o = t.snapshot().open.find((x) => x.who === "jev")!;
+    expect(o).toMatchObject({ side: "sell", size: 8, manual: true });
+    expect(o.tp).toBeCloseTo(2 * 0.98, 9); // short: take-profit 2% lower
+    expect(o.sl).toBeCloseTo(2 * 1.005, 9);
+    expect(f.ex.exits.at(-1)).toMatchObject({ side: "sell" });
+    expect(f.ex.exits.at(-1)!.tp).toBeCloseTo(1.96, 9);
+  } finally { reset(); }
+});
+
 test("live and dry-run records are kept apart: each mode loads only its own", async () => {
   const f = liveVenue();
   const live = new SpikeTrader(f.v, says("hold"), () => {});

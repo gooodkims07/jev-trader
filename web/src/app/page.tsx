@@ -44,7 +44,7 @@ export default function Page() {
                 <FlowChart events={feed.events} latest={feed.latest} />
               </div>
               <div className={styles.bookCol}>
-                <OrderBook apiUrl={API_URL} />
+                <OrderBook apiUrl={API_URL} snap={spike} />
               </div>
             </div>
           ) : (

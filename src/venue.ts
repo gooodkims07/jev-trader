@@ -129,6 +129,29 @@ export interface MarketExec {
   exitsState?(): Promise<"live" | "tp" | "sl" | "gone" | null>;
 }
 
+/** An order placed by hand from the dashboard. bbo: a limit at the best bid (buy) or best ask (sell) now. */
+export interface ManualOrder { side: Side; type: "limit" | "market"; price?: number; bbo?: boolean; size: number; reduceOnly: boolean }
+/** A resting order on the exchange; manual: placed from the dashboard (the bot's own start with "jev"). */
+export interface OpenOrder { ordId: string; side: Side; type: string; price: number; size: number; filled: number; reduceOnly: boolean; ts: number; manual: boolean }
+/** What the dashboard's order panel needs: balance, sizing rules, price limits, the position and resting orders. */
+export interface TradeInfo {
+  available: number; leverage: number; marginMode: string; lot: number; min: number; tick: number;
+  /** Tier-1 maintenance margin rate, for the estimated liquidation price. */
+  mmr: number;
+  /** The exchange's current price band for limit orders. */
+  limits: { buy: number; sell: number } | null;
+  bid: number; ask: number;
+  position: { size: number; avgPx: number };
+  orders: OpenOrder[];
+}
+/** Hand trading from the dashboard (live OKX only). */
+export interface ManualTrading {
+  info(): Promise<TradeInfo>;
+  /** Validates and places; a market order resolves once filled. */
+  place(o: ManualOrder): Promise<{ ordId: string; state: string; filled: number; avgPx: number; price: number | null }>;
+  cancel(ordId: string): Promise<void>;
+}
+
 /** A coin the settings panel offers. Sizes are in the coin: `lot` is the order step, `min` the smallest order. */
 export interface InstrumentChoice { instId: string; base: string; last: number; volUsd24h: number; lot: number; min: number; tickSz: string }
 
@@ -195,6 +218,8 @@ export interface Venue {
   exec?: MarketExec;
   /** Coins this venue can trade instead, for the settings panel (OKX: USDT perpetuals by 24 h volume). */
   instruments?(): Promise<InstrumentChoice[]>;
+  /** Live OKX: orders by hand from the dashboard. */
+  manual?: ManualTrading;
   /** Why the coin cannot be switched right now (e.g. a live position is open), or null. */
   switchBlocker?(): string | null;
   /** Why this order size is not tradable here, or null if it is (e.g. OKX lot size). For the settings panel. */

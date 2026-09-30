@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLang } from "@/lib/i18n";
 import { useVenue } from "@/lib/venue";
+import type { SpikeSnapshot } from "@/lib/types";
+import TradePanel from "./TradePanel";
 import styles from "./OrderBook.module.css";
 
 type Level = [number, number];
@@ -33,8 +35,13 @@ function group(levels: Level[], step: number, side: "bid" | "ask"): Level[] {
   return [...out].sort((a, b) => (side === "bid" ? b[0] - a[0] : a[0] - b[0])).map(([k, s]) => [k * step, s]);
 }
 
-/** OKX order book beside the chart: asks over bids, cumulative depth bars, the last trade, and the bid / ask split. */
-export default function OrderBook({ apiUrl }: { apiUrl: string }) {
+/**
+ * OKX order book beside the chart: asks over bids, cumulative depth bars, the last trade, and the bid / ask split.
+ * Its "order" tab is the hand-trading panel; a price clicked in the book goes into its limit price.
+ */
+export default function OrderBook({ apiUrl, snap }: { apiUrl: string; snap: SpikeSnapshot | null }) {
+  const [tab, setTab] = useState<"book" | "trade">("book");
+  const [picked, setPicked] = useState<{ price: number; at: number } | null>(null);
   const venue = useVenue();
   const { t } = useLang();
   const [depth, setDepth] = useState<Depth | null>(null);
@@ -101,7 +108,7 @@ export default function OrderBook({ apiUrl }: { apiUrl: string }) {
   const dec = Math.max(0, Math.round(-Math.log10(step)));
   const px = (p: number) => p.toFixed(dec);
   const row = (r: { p: number; a: number; c: number }, side: "bid" | "ask") => (
-    <div key={`${side}${r.p}`} className={styles.row}>
+    <div key={`${side}${r.p}`} className={styles.row} role="button" tabIndex={0} title={t("book.pick")} onClick={() => { setPicked({ price: r.p, at: Date.now() }); setTab("trade"); }}>
       <span className={styles.bar} style={{ width: `${(r.c / book!.max) * 100}%`, background: side === "bid" ? "var(--buy-bar-dim)" : "var(--sell-bar-dim)" }} />
       <span className={side === "bid" ? styles.bidPx : styles.askPx}>{px(r.p)}</span>
       <span>{compact(r.a)}</span>
@@ -112,11 +119,16 @@ export default function OrderBook({ apiUrl }: { apiUrl: string }) {
   return (
     <div className={styles.book}>
       <div className={styles.head}>
-        <span className={styles.title}>{t("book.title")}</span>
-        <select className={styles.step} value={step} onChange={(e) => setStep(Number(e.target.value))} aria-label={t("book.step")}>
+        <span className={styles.tabs}>
+          {(["book", "trade"] as const).map((k) => (
+            <button key={k} type="button" className={k === tab ? styles.tabOn : undefined} aria-pressed={k === tab} onClick={() => setTab(k)}>{t(k === "book" ? "book.title" : "trade.title")}</button>
+          ))}
+        </span>
+        {tab === "trade" ? null : <select className={styles.step} value={step} onChange={(e) => setStep(Number(e.target.value))} aria-label={t("book.step")}>
           {steps.map((s) => <option key={s} value={s}>{s.toFixed(Math.max(0, Math.round(-Math.log10(s))))}</option>)}
-        </select>
+        </select>}
       </div>
+      {tab === "trade" ? <TradePanel apiUrl={apiUrl} snap={snap} pickedPrice={picked} /> : <>
       <div className={styles.views} role="group" aria-label={t("book.view")}>
         {(["both", "bids", "asks"] as View[]).map((v) => (
           <button key={v} type="button" className={v === view ? styles.viewOn : undefined} aria-pressed={v === view} onClick={() => setView(v)}>{t(`book.${v}`)}</button>
@@ -156,6 +168,7 @@ export default function OrderBook({ apiUrl }: { apiUrl: string }) {
           <span className={styles.ratioS}>S</span>
         </div>
       ) : null}
+      </>}
     </div>
   );
 }

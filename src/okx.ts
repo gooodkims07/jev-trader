@@ -17,6 +17,7 @@
  */
 import { config } from "./config";
 import { OkxApi, OkxError, newClOrdId, okxWs, stepDecimals } from "./okx-api";
+import type { ManualOrder, ManualTrading, TradeInfo } from "./venue";
 import { bookFromLevels, summarize, type InstrumentChoice, type MarketExec, type MarketFill, type Book, type MakerFill, type OrderId, type Quote, type QuoteResult, type Side, type TradePrint, type TradeSource, type TradeSummary, type Venue, type VenueInfo } from "./venue";
 
 const RING = 500;
@@ -434,6 +435,71 @@ export class OkxVenue implements Venue {
   }
 
   private exitAlgo: string | null = null;
+
+  /** Live only: orders by hand from the dashboard, tagged "man" so the bot's own clean-ups (prefix "jev") leave them. */
+  get manual(): ManualTrading | undefined {
+    if (!this.live) return undefined;
+    return { info: () => this.tradeInfo(), place: (o) => this.placeManual(o), cancel: (id) => this.cancelManual(id) };
+  }
+
+  private mmrCache: number | null = null;
+  private async tradeInfo(): Promise<TradeInfo> {
+    const [base, quote] = this.instId.split("-");
+    const [bal, pos, orders, lim, book] = await Promise.all([
+      this.api.signed<{ details: { ccy: string; availBal: string }[] }[]>("GET", "/api/v5/account/balance", { ccy: "USDT" }),
+      this.api.signed<{ instId: string; pos: string; avgPx: string }[]>("GET", "/api/v5/account/positions", { instId: this.instId }),
+      this.api.signed<{ ordId: string; clOrdId: string; side: Side; ordType: string; px: string; sz: string; accFillSz: string; reduceOnly: string; cTime: string }[]>("GET", "/api/v5/trade/orders-pending", { instType: "SWAP", instId: this.instId }),
+      this.api.public<{ buyLmt: string; sellLmt: string }[]>("/api/v5/public/price-limit", { instId: this.instId }).catch(() => []),
+      this.readBook(),
+    ]);
+    if (this.mmrCache === null) {
+      const tiers = await this.api.public<{ tier: string; mmr: string }[]>("/api/v5/public/position-tiers", { instType: "SWAP", tdMode: config.okx.marginMode, instFamily: `${base}-${quote}` }).catch(() => []);
+      this.mmrCache = Number(tiers.find((t) => t.tier === "1")?.mmr ?? 0.005);
+    }
+    const p = pos.find((x) => x.instId === this.instId && Number(x.pos) !== 0);
+    this.availUsdt = Number(bal[0]?.details.find((d) => d.ccy === "USDT")?.availBal ?? this.availUsdt);
+    return {
+      available: this.availUsdt, leverage: config.okx.leverage, marginMode: config.okx.marginMode,
+      lot: round(this.lotSz * this.ctVal, 10), min: round(this.minSz * this.ctVal, 10), tick: 10 ** -this.tickDec, mmr: this.mmrCache,
+      limits: lim[0] ? { buy: Number(lim[0].buyLmt), sell: Number(lim[0].sellLmt) } : null,
+      bid: book.bid, ask: book.ask,
+      position: { size: p ? round(Number(p.pos) * this.ctVal, 10) : 0, avgPx: p ? Number(p.avgPx) : 0 },
+      orders: orders.map((o) => ({ ordId: o.ordId, side: o.side, type: o.ordType, price: Number(o.px), size: round(Number(o.sz) * this.ctVal, 10), filled: round(Number(o.accFillSz) * this.ctVal, 10), reduceOnly: o.reduceOnly === "true", ts: Number(o.cTime), manual: !o.clOrdId?.startsWith(CL_PREFIX) })),
+    };
+  }
+
+  private async placeManual(o: ManualOrder) {
+    const why = this.checkSize(o.size);
+    if (why) throw new Error(`amount ${why}`);
+    let price: number | null = null;
+    if (o.type === "limit") {
+      price = o.bbo ? (o.side === "buy" ? (await this.readBook()).bid : (await this.readBook()).ask) : Number(o.price);
+      if (!(price > 0)) throw new Error("price must be above 0");
+      const ticks = price * 10 ** this.tickDec;
+      if (Math.abs(ticks - Math.round(ticks)) > 1e-6) throw new Error(`price must be a multiple of ${10 ** -this.tickDec}`);
+      price = round(price, this.tickDec);
+    }
+    if (!o.reduceOnly) await this.syncLeverage();
+    const [r] = await this.api.signed<PlaceResult[]>("POST", "/api/v5/trade/order", {
+      instId: this.instId, tdMode: config.okx.marginMode, side: o.side, ordType: o.type,
+      ...(price !== null ? { px: price.toFixed(this.tickDec) } : {}),
+      sz: String(round(o.size / this.ctVal, 8)), clOrdId: newClOrdId("man"), ...(o.reduceOnly ? { reduceOnly: true } : {}),
+    });
+    console.log(`okx manual ${o.type} ${o.side} ${o.size} ${this.base}${price !== null ? ` at ${price}` : ""}${o.reduceOnly ? " reduce-only" : ""}: order ${r!.ordId}`);
+    // Market: wait for the fill (a limit rests; its fill reaches the bot through the position sync).
+    for (let i = 0; i < (o.type === "market" ? 30 : 1); i++) {
+      const [x] = await this.api.signed<{ state: string; avgPx: string; accFillSz: string }[]>("GET", "/api/v5/trade/order", { instId: this.instId, ordId: r!.ordId });
+      const filled = round(Number(x?.accFillSz ?? 0) * this.ctVal, 10);
+      if (o.type === "limit" || x?.state === "filled" || x?.state === "canceled") return { ordId: r!.ordId, state: x?.state ?? "live", filled, avgPx: Number(x?.avgPx || 0), price };
+      await Bun.sleep(100);
+    }
+    return { ordId: r!.ordId, state: "partially_filled", filled: 0, avgPx: 0, price };
+  }
+
+  private async cancelManual(ordId: string) {
+    await this.api.signed("POST", "/api/v5/trade/cancel-order", { instId: this.instId, ordId });
+    console.log(`okx manual cancel: order ${ordId}`);
+  }
 
   /** Market order, then read it back until filled (a market order on a live book fills at once). */
   private async marketOrder(side: Side, size: number, reduceOnly: boolean): Promise<MarketFill> {

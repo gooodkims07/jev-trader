@@ -668,8 +668,7 @@ export class SpikeTrader {
       o.entry = pos.avgPx || o.entry;
       o.manual = true; // part of it is no longer Jev's
       o.entryFees = (o.entryFees ?? 0) + f.fee;
-      o.tp = o.entry * (1 + (dir * this.tpPct) / 100);
-      o.sl = o.entry * (1 - (dir * this.slPct) / 100);
+      ({ tp: o.tp, sl: o.sl } = this.levels(o.side, o.entry, this.exitsFor(f.ordIds)));
       this.feesUsd += f.fee; this.realized -= f.fee;
       o.exitsOnExchange = await exec.setExits({ side: o.side, tp: o.tp, sl: o.sl });
       console.log(`spike: ${qty} ${this.venue.info.base} added outside the bot; position now ${o.size} at ${o.entry}`);
@@ -701,10 +700,11 @@ export class SpikeTrader {
     // A position the bot does not hold (opened by hand, or what is left after turning): the bot takes it over.
     const side: Side = pos.size > 0 ? "buy" : "sell", dir = pos.size > 0 ? 1 : -1, size = Math.abs(pos.size);
     const entry = pos.avgPx || book.mid;
-    const fee = config.spike.takerFeeRate * entry * size;
+    const got = await this.outsideFills(side, size, Date.now() - 3_600_000, book); // the fills that opened it, if recent
+    const fee = got.fee;
     // Adds counted as if it was built from orders of the current size: 40 at 10 a time is 1 + 3 adds.
     const adds = Math.max(0, Math.round(size / config.tradeSize) - 1);
-    const n: Open = { lev: config.okx.leverage, who: "jev", side, entry, size, adds, openedAt: block, spikeBlock: -1, openedTs: Date.now() - 1000, entryFees: fee, manual: true, tp: entry * (1 + (dir * this.tpPct) / 100), sl: entry * (1 - (dir * this.slPct) / 100) };
+    const n: Open = { lev: config.okx.leverage, who: "jev", side, entry, size, adds, openedAt: block, spikeBlock: -1, openedTs: Date.now() - 1000, entryFees: fee, manual: true, ...this.levels(side, entry, this.exitsFor(got.ordIds)) };
     this.open.set("jev", n);
     this.feesUsd += fee; this.realized -= fee;
     n.exitsOnExchange = await exec.setExits({ side, tp: n.tp, sl: n.sl });
@@ -720,17 +720,39 @@ export class SpikeTrader {
     const all = await this.exec!.fillsSince(sinceMs, side).catch(() => []);
     const key = (f: (typeof all)[number]) => f.id ?? `${f.ts}:${f.px}:${f.size}`;
     let got = 0, px = 0, fee = 0;
+    const ordIds: string[] = [];
     for (const f of all.filter((f) => !(f.ordId && this.ownOrders.has(f.ordId)) && !this.bookedFills.has(key(f))).reverse()) {
       if (got >= qty - 1e-9) break;
       const take = Math.min(f.size, qty - got);
       px += f.px * take; fee += (f.fee * take) / f.size; got += take;
       this.bookedFills.add(key(f));
+      if (f.ordId) ordIds.push(f.ordId);
     }
     if (got < qty - 1e-9) {
       const rest = qty - got;
       px += book.mid * rest; fee += config.spike.takerFeeRate * book.mid * rest;
     }
-    return { px: px / qty, fee };
+    return { px: px / qty, fee, ordIds };
+  }
+
+  /**
+   * Take-profit and stop (price moves in %, from the position's entry) given with an order placed by hand from
+   * the dashboard, by order id: used when the sync takes over or joins its fill, in place of the settings.
+   */
+  private manualExits = new Map<string, { tpPct: number; slPct: number; at: number }>();
+  noteManualExits(ordId: string, tpPct: number, slPct: number) {
+    this.manualExits.set(ordId, { tpPct, slPct, at: Date.now() });
+    for (const [id, x] of this.manualExits) if (Date.now() - x.at > 7 * 86_400_000) this.manualExits.delete(id); // a week is plenty
+  }
+  /** The exits given with any of these orders (the newest), or null to use the settings. */
+  private exitsFor(ordIds: string[]) {
+    let best: { tpPct: number; slPct: number; at: number } | null = null;
+    for (const id of ordIds) { const x = this.manualExits.get(id); if (x && (!best || x.at > best.at)) best = x; }
+    return best;
+  }
+  private levels(side: Side, entry: number, x: { tpPct: number; slPct: number } | null) {
+    const dir = side === "buy" ? 1 : -1, tp = x?.tpPct ?? this.tpPct, sl = x?.slPct ?? this.slPct;
+    return { tp: entry * (1 + (dir * tp) / 100), sl: entry * (1 - (dir * sl) / 100) };
   }
 
   /** Update the position's best and worst move from its entry (price %, + in its favour) with the mid now. */
