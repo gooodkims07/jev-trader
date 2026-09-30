@@ -49,18 +49,19 @@ export async function runSpike(venue: Venue) {
         let b: Record<string, unknown>;
         try { b = (await req.json()) as Record<string, unknown>; } catch { return { status: 400, body: { error: "body must be JSON" } }; }
         const side = b.side, type = b.type, size = Number(b.size), price = b.price === undefined ? undefined : Number(b.price);
+        const refuse = (error: string) => { console.warn(`manual order refused (${JSON.stringify(b)}): ${error}`); return { status: 400, body: { error } }; };
         const tpPct = b.tpPct === undefined ? null : Number(b.tpPct), slPct = b.slPct === undefined ? null : Number(b.slPct);
-        if (side !== "buy" && side !== "sell") return { status: 400, body: { error: "side must be buy or sell" } };
-        if (type !== "limit" && type !== "market") return { status: 400, body: { error: "type must be limit or market" } };
-        if (!(size > 0)) return { status: 400, body: { error: "amount must be above 0" } };
-        if (type === "limit" && !b.bbo && !(price! > 0)) return { status: 400, body: { error: "a limit order needs a price" } };
-        if ((tpPct !== null || slPct !== null) && !(tpPct! > 0 && tpPct! <= 50 && slPct! > 0 && slPct! <= 50)) return { status: 400, body: { error: "take-profit and stop must both be between 0 and 50%" } };
+        if (side !== "buy" && side !== "sell") return refuse("side must be buy or sell");
+        if (type !== "limit" && type !== "market") return refuse("type must be limit or market");
+        if (!(size > 0)) return refuse("amount must be above 0");
+        if (type === "limit" && !b.bbo && !(price! > 0)) return refuse("a limit order needs a price");
+        if ((tpPct !== null || slPct !== null) && !(tpPct! > 0 && tpPct! <= 50 && slPct! > 0 && slPct! <= 50)) return refuse("take-profit and stop must both be between 0 and 50%");
         try {
           const r = await venue.manual!.place({ side, type, price, bbo: !!b.bbo, size, reduceOnly: !!b.reduceOnly });
           if (tpPct !== null && slPct !== null && !b.reduceOnly) trader.noteManualExits(r.ordId, tpPct, slPct);
           return { status: 200, body: r };
         } catch (e) {
-          return { status: 400, body: { error: (e as Error).message } };
+          return refuse((e as Error).message);
         }
       },
       "/trade/cancel": async (req) => {

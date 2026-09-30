@@ -114,7 +114,7 @@ export default function TradePanel({ apiUrl, snap, pickedPrice }: { apiUrl: stri
   };
 
   const send = async (side: Side) => {
-    if (confirm !== side) { setConfirm(side); setMsg(null); return; }
+    if (confirm !== side) { setConfirm(side); setMsg(null); return; } // first click: arm; the second sends
     setConfirm(null); setBusy(true); setMsg(null);
     const body: Record<string, unknown> = { side, type, size: amt, reduceOnly };
     if (type === "limit") { if (bbo) body.bbo = true; else body.price = Number(price); }
@@ -210,7 +210,10 @@ export default function TradePanel({ apiUrl, snap, pickedPrice }: { apiUrl: stri
       ) : null}
 
       <div className={styles.buttons}>{button("buy")}{button("sell")}</div>
+      {confirm ? <div className={styles.confirmHint}>{t("trade.confirmHint")}</div> : null}
+      {busy ? <div className={styles.note}>{t("trade.sending")}</div> : null}
       {msg ? <div className={msg.ok ? styles.ok : styles.bad}>{msg.text}</div> : null}
+      {invalid && !busy && !msg ? <div className={styles.note}>{t(!(amt > 0) ? "trade.needAmount" : type === "limit" && !bbo && !(Number(price) > 0) ? "trade.needPrice" : "trade.needExits")}</div> : null}
       <div className={styles.metas}>{side2("buy")}{side2("sell")}</div>
 
       <div className={styles.section}>

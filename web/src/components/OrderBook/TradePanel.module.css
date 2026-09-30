@@ -257,3 +257,11 @@
   border-radius: 4px;
   padding: 0 3px;
 }
+
+.confirmHint {
+  font-size: 11.5px;
+  color: var(--ink);
+  background: var(--late-cell);
+  border-radius: 8px;
+  padding: 5px 8px;
+}
