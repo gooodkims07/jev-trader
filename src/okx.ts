@@ -439,7 +439,7 @@ export class OkxVenue implements Venue {
   /** Live only: orders by hand from the dashboard, tagged "man" so the bot's own clean-ups (prefix "jev") leave them. */
   get manual(): ManualTrading | undefined {
     if (!this.live) return undefined;
-    return { info: () => this.tradeInfo(), place: (o) => this.placeManual(o), cancel: (id) => this.cancelManual(id) };
+    return { info: () => this.tradeInfo(), place: (o) => this.placeManual(o), cancel: (id) => this.cancelManual(id), amend: (id, px) => this.amendManual(id, px) };
   }
 
   private mmrCache: number | null = null;
@@ -494,6 +494,13 @@ export class OkxVenue implements Venue {
       await Bun.sleep(100);
     }
     return { ordId: r!.ordId, state: "partially_filled", filled: 0, avgPx: 0, price };
+  }
+
+  private async amendManual(ordId: string, price: number) {
+    const ticks = price * 10 ** this.tickDec;
+    if (!(price > 0) || Math.abs(ticks - Math.round(ticks)) > 1e-6) throw new Error(`price must be a multiple of ${10 ** -this.tickDec}`);
+    await this.api.signed("POST", "/api/v5/trade/amend-order", { instId: this.instId, ordId, newPx: price.toFixed(this.tickDec) });
+    console.log(`okx manual amend: order ${ordId} to ${price}`);
   }
 
   private async cancelManual(ordId: string) {

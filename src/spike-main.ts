@@ -64,6 +64,14 @@ export async function runSpike(venue: Venue) {
           return refuse((e as Error).message);
         }
       },
+      "/trade/amend": async (req) => {
+        const denied = guard(req, "POST");
+        if (denied) return denied;
+        let b: { ordId?: unknown; price?: unknown };
+        try { b = (await req.json()) as { ordId?: unknown; price?: unknown }; } catch { return { status: 400, body: { error: "body must be JSON" } }; }
+        if (typeof b.ordId !== "string" || !/^\d+$/.test(b.ordId)) return { status: 400, body: { error: "ordId" } };
+        try { await venue.manual!.amend(b.ordId, Number(b.price)); return { status: 200, body: { ok: true } }; } catch (e) { return { status: 400, body: { error: (e as Error).message } }; }
+      },
       "/trade/cancel": async (req) => {
         const denied = guard(req, "POST");
         if (denied) return denied;
@@ -77,8 +85,17 @@ export async function runSpike(venue: Venue) {
         if (req.method !== "POST") return { status: 405, body: { error: "POST" } };
         if (!config.adminToken) return { status: 403, body: { error: "read-only: start the server with ADMIN_TOKEN" } };
         if (!tokenOk(req)) return { status: 401, body: { error: "wrong or missing admin token" } };
-        const r = await trader.applyExits();
-        return r ? { status: 200, body: r } : { status: 409, body: { error: "no open position" } };
+        // Optional body { tp?, sl? }: those prices (a line dragged on the chart); none: the settings' levels.
+        let at: { tp?: number; sl?: number } | undefined;
+        const text = await req.text();
+        if (text.trim()) {
+          try { const b = JSON.parse(text) as { tp?: unknown; sl?: unknown }; at = { ...(b.tp !== undefined ? { tp: Number(b.tp) } : {}), ...(b.sl !== undefined ? { sl: Number(b.sl) } : {}) }; } catch { return { status: 400, body: { error: "body must be JSON" } }; }
+          if (Object.values(at).some((v) => !(v! > 0))) return { status: 400, body: { error: "prices must be above 0" } };
+        }
+        try {
+          const r = await trader.applyExits(at);
+          return r ? { status: 200, body: r } : { status: 409, body: { error: "no open position" } };
+        } catch (e) { return { status: 400, body: { error: (e as Error).message } }; }
       },
     },
   );

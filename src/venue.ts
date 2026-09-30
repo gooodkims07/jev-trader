@@ -150,6 +150,8 @@ export interface ManualTrading {
   /** Validates and places; a market order resolves once filled. */
   place(o: ManualOrder): Promise<{ ordId: string; state: string; filled: number; avgPx: number; price: number | null }>;
   cancel(ordId: string): Promise<void>;
+  /** Move a resting order to a new price. */
+  amend(ordId: string, price: number): Promise<void>;
 }
 
 /** A coin the settings panel offers. Sizes are in the coin: `lot` is the order step, `min` the smallest order. */

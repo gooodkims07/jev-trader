@@ -369,3 +369,10 @@
   stroke: var(--panel);
   stroke-width: 3px;
 }
+
+.levelGrab {
+  stroke: transparent;
+  stroke-width: 12px;
+  cursor: ns-resize;
+  pointer-events: stroke;
+}

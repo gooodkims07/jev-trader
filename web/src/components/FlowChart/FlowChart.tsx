@@ -53,7 +53,8 @@ function cellFill(e: BlockEvent): string {
 }
 
 /** A horizontal line on the chart (OKX): a resting order, or the position's entry, take-profit and stop. */
-export interface ChartLevel { key: string; price: number; kind: "buy" | "sell" | "entry" | "tp" | "sl"; size?: number; side?: "buy" | "sell" }
+/** draggable: the line can be dragged up or down; on release onLevelDrag gets the new price (snapped to the tick). */
+export interface ChartLevel { key: string; price: number; kind: "buy" | "sell" | "entry" | "tp" | "sl"; size?: number; side?: "buy" | "sell"; draggable?: boolean }
 const LEVEL_STYLE: Record<ChartLevel["kind"], { colour: string; dash: string | undefined }> = {
   buy: { colour: "var(--buy-ink)", dash: "6 4" },
   sell: { colour: "var(--sell-ink)", dash: "6 4" },
@@ -66,10 +67,15 @@ export default function FlowChart({
   events,
   latest,
   levels = [],
+  onLevelDrag,
+  levelNote,
 }: {
   events: BlockEvent[];
   latest: BlockEvent | null;
   levels?: ChartLevel[];
+  onLevelDrag?: (level: ChartLevel, price: number) => void;
+  /** The last drag's outcome: ok with the new price as text, or refused with the reason. */
+  levelNote?: { ok: boolean; text: string } | null;
 }) {
   const venue = useVenue();
   const { t } = useLang();
@@ -79,6 +85,9 @@ export default function FlowChart({
   const scaleRef = useRef<{ lo: number; hi: number; block: number } | null>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [hover, setHover] = useState<number | null>(null);
+  // A line being dragged (its price follows the pointer), then held at the dropped price until the data catches up.
+  const [drag, setDrag] = useState<{ key: string; price: number } | null>(null);
+  const [held, setHeld] = useState<{ key: string; price: number; until: number } | null>(null);
   const gid = useId().replace(/[^a-zA-Z0-9]/g, "");
 
   // OKX only (the Kuru demo stays fixed): the time range shown (buttons, or the wheel stepping through them) and
@@ -108,7 +117,7 @@ export default function FlowChart({
   }, []);
   const zoomY = useCallback((factor: number | null) => {
     setYz((z) => {
-      const next = factor === null ? 1 : Math.min(8, Math.max(0.5, z * factor));
+      const next = factor === null ? 1 : Math.min(8, Math.max(0.1, z * factor)) // down to 0.1: wide enough to bring far order lines into view;
       try { localStorage.setItem("jev.chartZoomY", String(next)); } catch { /* not kept */ }
       return next;
     });
@@ -229,6 +238,7 @@ export default function FlowChart({
 
     const range = hi - lo || 1;
     const fy = (p: number) => PAD_TOP + (1 - (p - lo) / range) * plotH;
+    const py = (y: number) => lo + (1 - (y - PAD_TOP) / plotH) * range; // fy inverted, for dragging lines
 
     const pts = series.map((e) => [fx(e.block), fy(e.mid)] as const);
     const line = smoothPath(pts);
@@ -316,6 +326,7 @@ export default function FlowChart({
       times,
       fx,
       fy,
+      py,
       last,
       base,
       shift: w - ANCHOR_GAP - fx(last.block),
@@ -520,22 +531,55 @@ export default function FlowChart({
                 </text>
               ))}
 
-              {zoomable ? levels.map((lv) => {
-                // Off the price band: pinned to its edge with an arrow, so a far take-profit or stop still shows.
-                const top = model.plotTop, bottom = model.plotTop + model.plotH, raw = model.fy(lv.price);
+              {zoomable ? (() => { const pinned = { top: 0, bottom: 0 }; return levels.map((lv) => {
+                // Off the price band: pinned to its edge with an arrow (stacked, one under another), so a far
+                // take-profit or stop still shows. Only a line inside the band can be dragged.
+                const price = drag?.key === lv.key ? drag.price : held?.key === lv.key && Date.now() < held.until && Math.abs(held.price - lv.price) > 1e-12 ? held.price : lv.price;
+                const top = model.plotTop, bottom = model.plotTop + model.plotH, raw = model.fy(price);
                 const y = Math.min(Math.max(raw, top), bottom), off = raw < top ? "↑" : raw > bottom ? "↓" : "";
                 const st = LEVEL_STYLE[lv.kind];
                 const n = lv.size !== undefined ? +lv.size.toFixed(6) : 0;
                 const name = lv.kind === "buy" ? t("level.buy", { n }) : lv.kind === "sell" ? t("level.sell", { n }) : lv.kind === "entry" ? t("level.entry", { side: t(lv.side === "sell" ? "trade.short" : "trade.long"), n }) : t(lv.kind === "tp" ? "level.tp" : "level.sl");
+                const canDrag = !!lv.draggable && !!onLevelDrag && (!off || drag?.key === lv.key);
+                const stack = off === "↑" ? pinned.top++ : off === "↓" ? pinned.bottom++ : 0;
+                const startDrag = (ev: React.PointerEvent) => {
+                  if (!canDrag) return;
+                  ev.preventDefault(); ev.stopPropagation();
+                  const svg = (ev.currentTarget as SVGElement).ownerSVGElement!;
+                  const tick = 10 ** -venue.priceDecimals;
+                  const at = (clientY: number) => Math.round(model.py(clientY - svg.getBoundingClientRect().top) / tick) * tick;
+                  let last = price;
+                  setDrag({ key: lv.key, price });
+                  const move = (e: PointerEvent) => { last = at(e.clientY); setDrag({ key: lv.key, price: last }); };
+                  const up = (e: PointerEvent | KeyboardEvent) => {
+                    window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); window.removeEventListener("keydown", esc);
+                    setDrag(null);
+                    if (e instanceof KeyboardEvent) return; // Escape: no change
+                    if (Math.abs(last - lv.price) < tick / 2) return;
+                    setHeld({ key: lv.key, price: last, until: Date.now() + 5000 });
+                    onLevelDrag!(lv, +last.toFixed(venue.priceDecimals));
+                  };
+                  const esc = (e: KeyboardEvent) => { if (e.key === "Escape") up(e); };
+                  window.addEventListener("pointermove", move); window.addEventListener("pointerup", up); window.addEventListener("keydown", esc);
+                };
                 return (
                   <g key={lv.key}>
-                    {off ? null : <line x1={0} x2={w - TAG_W - 8} y1={y} y2={y} stroke={st.colour} strokeWidth={1} strokeDasharray={st.dash} opacity={0.8} />}
-                    <text className={styles.levelLabel} x={w - TAG_W - 14} textAnchor="end" y={off === "↑" ? y + 12 : y - 4} fill={st.colour}>
-                      {name} {lv.price.toFixed(venue.priceDecimals)}{off ? ` ${off}` : ""}
+                    {off ? null : <line x1={0} x2={w - TAG_W - 8} y1={y} y2={y} stroke={st.colour} strokeWidth={drag?.key === lv.key ? 1.6 : 1} strokeDasharray={st.dash} opacity={0.8} />}
+                    <text className={styles.levelLabel} x={w - TAG_W - 14} textAnchor="end" y={off === "↑" ? y + 12 + stack * 13 : off === "↓" ? y - 4 - stack * 13 : y - 4} fill={st.colour}>
+                      {canDrag ? "↕ " : ""}{name} {price.toFixed(venue.priceDecimals)}{off ? ` ${off}` : ""}
                     </text>
+                    {canDrag ? (
+                      // A wide invisible band to grab.
+                      <line className={styles.levelGrab} x1={0} x2={w - TAG_W - 8} y1={y} y2={y} onPointerDown={startDrag}>
+                        <title>{t("level.dragHelp")}</title>
+                      </line>
+                    ) : null}
                   </g>
                 );
-              }) : null}
+              }); })() : null}
+              {zoomable && levelNote ? (
+                <text className={styles.levelLabel} x={w - TAG_W - 14} y={model.plotTop - 10} textAnchor="end" fill={levelNote.ok ? "var(--buy-ink)" : "var(--sell-ink)"}>{levelNote.ok ? t("level.moved", { px: levelNote.text }) : t("level.refused", { why: levelNote.text })}</text>
+              ) : null}
 
               <g className={styles.tag} style={{ transform: `translateY(${model.endY.toFixed(1)}px)` }}>
                 <line className={styles.guide} x1={w - ANCHOR_GAP + 8} x2={w - TAG_W - 6} y1="0" y2="0" />

@@ -15,7 +15,7 @@ import { VenueProvider } from "@/lib/venue";
 import { LangProvider } from "@/lib/i18n";
 import SettingsPanel from "@/components/Settings/SettingsPanel";
 import OrderBook from "@/components/OrderBook/OrderBook";
-import { useTradeInfo } from "@/lib/useTradeInfo";
+import { adminToken, useTradeInfo } from "@/lib/useTradeInfo";
 import type { ChartLevel } from "@/components/FlowChart/FlowChart";
 import { useState } from "react";
 import styles from "./page.module.css";
@@ -27,17 +27,33 @@ export default function Page() {
   const spikeMode = feed.meta?.strategy === "spike";
   const spike = useSpike(API_URL, spikeMode);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const trade = useTradeInfo(API_URL, spikeMode && feed.meta?.venue?.name === "okx" && !feed.meta?.dryRun);
+  const live = spikeMode && feed.meta?.venue?.name === "okx" && !feed.meta?.dryRun;
+  const trade = useTradeInfo(API_URL, live);
   // Lines on the chart: resting orders, and Jev's position (entry, take-profit, stop).
   const jevOpen = spike?.open.find((o) => o.who === "jev");
   const levels: ChartLevel[] = [
-    ...(trade.info?.orders ?? []).filter((o) => o.price > 0).map((o) => ({ key: o.ordId, price: o.price, kind: o.side, size: o.size - o.filled })),
+    ...(trade.info?.orders ?? []).filter((o) => o.price > 0).map((o) => ({ key: o.ordId, price: o.price, kind: o.side, size: o.size - o.filled, draggable: o.manual })),
     ...(jevOpen ? [
       { key: "entry", price: jevOpen.entry, kind: "entry" as const, size: jevOpen.size ?? 0, side: jevOpen.side },
-      { key: "tp", price: jevOpen.tp, kind: "tp" as const },
-      { key: "sl", price: jevOpen.sl, kind: "sl" as const },
+      { key: "tp", price: jevOpen.tp, kind: "tp" as const, draggable: live },
+      { key: "sl", price: jevOpen.sl, kind: "sl" as const, draggable: live },
     ] : []),
   ];
+  // A dragged line: an order line amends the order's price; the take-profit or stop line moves that exit on OKX.
+  const [levelNote, setLevelNote] = useState<{ ok: boolean; text: string } | null>(null);
+  const onLevelDrag = async (lv: ChartLevel, price: number) => {
+    const token = adminToken();
+    const say = (ok: boolean, text: string) => { setLevelNote({ ok, text }); setTimeout(() => setLevelNote(null), 5000); };
+    if (!token) return say(false, "no admin token");
+    const base = API_URL.replace(/\/+$/, "");
+    const [path, body] = lv.kind === "tp" || lv.kind === "sl" ? ["/spike/exits", { [lv.kind]: price }] : ["/trade/amend", { ordId: lv.key, price }];
+    try {
+      const r = await fetch(`${base}${path}`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
+      const res = await r.json();
+      say(r.ok, r.ok ? price.toFixed(feed.meta?.venue?.priceDecimals ?? 4) : String(res.error ?? r.status));
+      trade.reload();
+    } catch { say(false, "network"); }
+  };
   // Kuru is the public demo: English, no controls. OKX: Korean by default, with settings.
   const isKuru = !feed.meta?.venue || feed.meta.venue.name === "kuru";
 
@@ -54,7 +70,7 @@ export default function Page() {
             // OKX spike: the order book beside the chart.
             <div className={`${styles.chartWrap} ${styles.chartWrapControls} ${styles.chartRow}`}>
               <div className={styles.chartMain}>
-                <FlowChart events={feed.events} latest={feed.latest} levels={levels} />
+                <FlowChart events={feed.events} latest={feed.latest} levels={levels} onLevelDrag={onLevelDrag} levelNote={levelNote} />
               </div>
               <div className={styles.bookCol}>
                 <OrderBook apiUrl={API_URL} snap={spike} trade={trade} />

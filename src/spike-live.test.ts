@@ -329,6 +329,22 @@ test("hand orders: the take-profit and stop given with a dashboard order are use
   } finally { reset(); }
 });
 
+test("applyExits with prices: moves the take-profit and stop to them, refusing one on the wrong side of the price", async () => {
+  try {
+    config.tradeSize = 5; config.okx.leverage = 5; config.risk.sessionStopLoss = 0;
+    const f = liveVenue();
+    const t = new SpikeTrader(f.v, says("buy"), () => {});
+    let b = await openLong(t, f, 18000);
+    await t.onBlock(b++);
+    const mid = 2 * 0.994;
+    const r = await t.applyExits({ tp: mid * 1.03 });
+    expect(r!.tp).toBeCloseTo(mid * 1.03, 9);
+    expect(f.ex.exits.at(-1)!.tp).toBeCloseTo(mid * 1.03, 9);
+    await expect(t.applyExits({ sl: mid * 1.01 })).rejects.toThrow(/below the price now/);
+    expect(t.snapshot().open.find((o) => o.who === "jev")!.tp).toBeCloseTo(mid * 1.03, 9);
+  } finally { reset(); }
+});
+
 test("live and dry-run records are kept apart: each mode loads only its own", async () => {
   const f = liveVenue();
   const live = new SpikeTrader(f.v, says("hold"), () => {});

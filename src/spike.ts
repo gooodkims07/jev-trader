@@ -464,15 +464,24 @@ export class SpikeTrader {
    * Move Jev's open position to the take-profit and stop of the current settings (from its entry), and replace
    * its exits on the exchange when live. Waits for the tick in progress, so no order races it. Null when flat.
    */
-  async applyExits(): Promise<{ tp: number; sl: number; onExchange: boolean } | null> {
+  async applyExits(at?: { tp?: number; sl?: number }): Promise<{ tp: number; sl: number; onExchange: boolean } | null> {
     while (this.busy) await Bun.sleep(25);
     this.busy = true;
     try {
       const o = this.open.get("jev");
       if (!o) return null;
       const dir = o.side === "buy" ? 1 : -1;
-      o.tp = o.entry * (1 + (dir * this.tpPct) / 100);
-      o.sl = o.entry * (1 - (dir * this.slPct) / 100);
+      if (at) {
+        // Prices given (a line dragged on the chart): each must be on its own side of the price now.
+        const mid = this.lastMid;
+        if (at.tp !== undefined && !(dir * (at.tp - mid) > 0)) throw new Error(`take-profit ${at.tp} must be ${dir > 0 ? "above" : "below"} the price now (${mid})`);
+        if (at.sl !== undefined && !(dir * (mid - at.sl) > 0)) throw new Error(`stop ${at.sl} must be ${dir > 0 ? "below" : "above"} the price now (${mid})`);
+        if (at.tp !== undefined) o.tp = at.tp;
+        if (at.sl !== undefined) o.sl = at.sl;
+      } else {
+        o.tp = o.entry * (1 + (dir * this.tpPct) / 100);
+        o.sl = o.entry * (1 - (dir * this.slPct) / 100);
+      }
       if (this.exec) o.exitsOnExchange = await this.exec.setExits({ side: o.side, tp: o.tp, sl: o.sl });
       console.log(`spike: exits of the open ${o.side === "buy" ? "long" : "short"} moved to take-profit ${o.tp} / stop ${o.sl}`);
       return { tp: o.tp, sl: o.sl, onExchange: !!o.exitsOnExchange };
