@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLang } from "@/lib/i18n";
 import { useVenue } from "@/lib/venue";
 import type { SpikeSnapshot } from "@/lib/types";
@@ -82,15 +82,16 @@ export default function OrderBook({ apiUrl, snap }: { apiUrl: string; snap: Spik
     prevLast.current = last;
   }, [last]);
 
-  // As many rows as fit the height.
-  const listRef = useRef<HTMLDivElement | null>(null);
+  // As many rows as fit the height. The list remounts when the order tab closes, so watch whichever element is
+  // mounted (a callback ref), and ignore the 0 a detached one reports.
   const [listH, setListH] = useState(600);
-  useEffect(() => {
-    const el = listRef.current;
+  const ro = useRef<ResizeObserver | null>(null);
+  const listRef = useCallback((el: HTMLDivElement | null) => {
+    ro.current?.disconnect();
+    ro.current = null;
     if (!el || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(() => setListH(el.clientHeight));
-    ro.observe(el);
-    return () => ro.disconnect();
+    ro.current = new ResizeObserver(() => { if (el.clientHeight > 0) setListH(el.clientHeight); });
+    ro.current.observe(el);
   }, []);
   const perSide = view === "both" ? Math.max(3, Math.floor((listH - MID_H) / ROW_H / 2)) : Math.max(3, Math.floor((listH - MID_H) / ROW_H));
 
