@@ -457,3 +457,37 @@
   font-size: 12px;
   color: var(--muted);
 }
+
+/* close at market now (live) */
+.closeRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0 2px;
+  font-size: 12px;
+}
+
+.closeBtn,
+.closeArmed {
+  appearance: none;
+  border: 1px solid var(--border-2);
+  background: var(--bg);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font: 600 12px var(--font-sans), Inter, system-ui, sans-serif;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.closeArmed {
+  background: var(--sell);
+  border-color: var(--sell);
+  color: #fff;
+}
+
+.closeBtn:disabled,
+.closeArmed:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

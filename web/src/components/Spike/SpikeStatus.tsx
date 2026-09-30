@@ -97,6 +97,29 @@ export default function SpikeStatus({ snap, apiUrl }: { snap: SpikeSnapshot | nu
   // The open position keeps the exits it opened with; this moves them to the current settings (POST /spike/exits).
   const [exitsMsg, setExitsMsg] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
+
+  // Close at market now (live): all or half, reduce-only (POST /trade/close). Two clicks: arm, then send.
+  const [closeArm, setCloseArm] = useState<1 | 0.5 | null>(null);
+  const [closing, setClosing] = useState(false);
+  const [closeMsg, setCloseMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  useEffect(() => { if (!closeArm) return; const id = setTimeout(() => setCloseArm(null), 5000); return () => clearTimeout(id); }, [closeArm]);
+  const closeNow = async (fraction: 1 | 0.5) => {
+    if (closeArm !== fraction) { setCloseArm(fraction); setCloseMsg(null); return; }
+    setCloseArm(null);
+    let token = "";
+    try { token = localStorage.getItem("jev.adminToken") ?? ""; } catch { /* no storage */ }
+    if (!token) { setCloseMsg({ ok: false, text: t("spike.resetNoToken") }); return; }
+    setClosing(true);
+    try {
+      const r = await fetch(`${apiUrl.replace(/\/+$/, "")}/trade/close`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: JSON.stringify({ fraction }) });
+      const body = await r.json();
+      setCloseMsg(r.ok ? { ok: true, text: t("close.done", { n: +Number(body.filled).toFixed(6), px: body.avgPx ? venue.fmtMid(body.avgPx) : "-" }) } : { ok: false, text: r.status === 401 ? t("settings.unauthorized") : String(body.error ?? r.status) });
+    } catch {
+      setCloseMsg({ ok: false, text: t("close.failed") });
+    }
+    setClosing(false);
+    setTimeout(() => setCloseMsg(null), 8000);
+  };
   const want = jev && plan ? { tp: jev.entry * (1 + ((jev.side === "buy" ? 1 : -1) * plan.takeProfitPct) / 100), sl: jev.entry * (1 - ((jev.side === "buy" ? 1 : -1) * plan.stopLossPct) / 100) } : null;
   const stale = !!want && !!jev && (Math.abs(want.tp / jev.tp - 1) > 1e-6 || Math.abs(want.sl / jev.sl - 1) > 1e-6);
   const applyExits = async () => {
@@ -160,6 +183,18 @@ export default function SpikeStatus({ snap, apiUrl }: { snap: SpikeSnapshot | nu
               </span>
             </div>
             <ExitBar jev={jev} px={px} t={t} />
+            {plan?.live ? (
+              <div className={styles.closeRow}>
+                {([0.5, 1] as const).map((f) => (
+                  <button key={f} type="button" className={closeArm === f ? styles.closeArmed : styles.closeBtn} disabled={closing} onClick={() => closeNow(f)}>
+                    {closeArm === f ? t("close.confirm", { what: t(f === 1 ? "close.all" : "close.half") }) : t(f === 1 ? "close.all" : "close.half")}
+                  </button>
+                ))}
+                {closeArm ? <span className={styles.labelNote}>{t("close.hint")}</span> : null}
+                {closing ? <span className={styles.labelNote}>{t("close.sending")}</span> : null}
+                {closeMsg ? <span className={closeMsg.ok ? styles.pos : styles.neg}>{closeMsg.text}</span> : null}
+              </div>
+            ) : null}
             {stale || exitsMsg ? (
               <div className={styles.exitsRow}>
                 {stale && want ? (
