@@ -57,7 +57,7 @@ export interface ChartLevel { key: string; price: number; kind: "buy" | "sell" |
 const LEVEL_STYLE: Record<ChartLevel["kind"], { colour: string; dash: string | undefined }> = {
   buy: { colour: "var(--buy-ink)", dash: "6 4" },
   sell: { colour: "var(--sell-ink)", dash: "6 4" },
-  entry: { colour: "var(--ink-2)", dash: undefined },
+  entry: { colour: "var(--entry-line)", dash: undefined },
   tp: { colour: "var(--buy-ink)", dash: "2 3" },
   sl: { colour: "var(--sell-ink)", dash: "2 3" },
 };
