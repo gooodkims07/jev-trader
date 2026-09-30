@@ -117,7 +117,8 @@ export default function FlowChart({
   }, []);
   const zoomY = useCallback((factor: number | null) => {
     setYz((z) => {
-      const next = factor === null ? 1 : Math.min(8, Math.max(0.1, z * factor)) // down to 0.1: wide enough to bring far order lines into view;
+      // Down to 0.1: wide enough to bring far order lines into view.
+      const next = factor === null ? 1 : Math.min(8, Math.max(0.1, z * factor));
       try { localStorage.setItem("jev.chartZoomY", String(next)); } catch { /* not kept */ }
       return next;
     });
@@ -143,6 +144,12 @@ export default function FlowChart({
     return () => el.removeEventListener("wheel", onWheel);
   }, [zoomable, zoomY]);
   const yzoom = zoomable ? yz : 1;
+  // "Fit lines": the price band stretches to show every order / position line (on by default, kept per browser).
+  const [fitOn, setFitOn] = useState(true);
+  useEffect(() => { try { if (localStorage.getItem("jev.chartFit") === "0") setFitOn(false); } catch { /* none saved */ } }, []);
+  const toggleFit = useCallback(() => setFitOn((on) => { try { localStorage.setItem("jev.chartFit", on ? "0" : "1"); } catch { /* not kept */ } return !on; }), []);
+  const fitKey = zoomable && fitOn ? levels.map((l) => l.price.toFixed(8)).join(",") : "";
+  const fitPrices = useMemo(() => (fitKey ? fitKey.split(",").map(Number) : []), [fitKey]);
 
   useEffect(() => {
     const el = panelRef.current;
@@ -193,7 +200,8 @@ export default function FlowChart({
     const fx = (b: number) => (b - origin) * pxPerBlock;
     const step = pxPerBlock * span; // px between points
 
-    // --- value scale: window min/max, floored to 0.20% of price, eased 10%/block
+    // --- value scale: window min/max, floored to 0.20% of price, eased 10%/block. With "fit lines" on (OKX), the
+    // order, entry, take-profit and stop lines count as data, with a little room for their labels.
     let lo = Infinity;
     let hi = -Infinity;
     let sum = 0;
@@ -202,6 +210,13 @@ export default function FlowChart({
       if (e.mid > hi) hi = e.mid;
       sum += e.mid;
     }
+    // Room beyond the outermost lines: a little at the top, more at the bottom where the range buttons sit.
+    const fit: number[] = [];
+    if (fitPrices.length) {
+      const top = Math.max(hi, ...fitPrices), bottom = Math.min(lo, ...fitPrices), r = top - bottom || (sum / series.length) * 0.002;
+      fit.push(bottom - r * 0.14, top + r * 0.06);
+    }
+    for (const p of fit) { if (p < lo) lo = p; if (p > hi) hi = p; }
     const mean = sum / series.length;
     const floor = Math.max(mean * MIN_RANGE_PCT, 1e-9);
     if (hi - lo < floor) {
@@ -222,6 +237,7 @@ export default function FlowChart({
         if (e.mid < lo) lo = e.mid;
         if (e.mid > hi) hi = e.mid;
       }
+      for (const p of fit) { if (p < lo) lo = p; if (p > hi) hi = p; }
       if (hi - lo < floor) {
         const c = (hi + lo) / 2;
         lo = c - floor / 2;
@@ -335,7 +351,7 @@ export default function FlowChart({
       plotH,
       step,
     };
-  }, [events, latest, w, h, venue, zoomable, windowSec, yzoom, rsiOn]);
+  }, [events, latest, w, h, venue, zoomable, windowSec, yzoom, rsiOn, fitPrices]);
 
   const hv = useMemo(() => {
     if (!model || hover === null) return null;
@@ -636,6 +652,7 @@ export default function FlowChart({
             </button>
           ))}
           <button type="button" className={`${rsiOn ? styles.rangeOn : styles.range} ${styles.zoomGapBtn}`} aria-pressed={rsiOn} onClick={toggleRsi}>RSI</button>
+          <button type="button" className={`${fitOn ? styles.rangeOn : styles.range} ${styles.zoomGapBtn}`} aria-pressed={fitOn} onClick={toggleFit} title={t("zoom.fitHelp")}>{t("zoom.fit")}</button>
           <span className={styles.zoomGap}>{t("zoom.y")}</span>
           <button type="button" onClick={() => zoomY(1 / 1.25)} aria-label="zoom out price">-</button>
           <button type="button" onClick={() => zoomY(1.25)} aria-label="zoom in price">+</button>
