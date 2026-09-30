@@ -298,3 +298,10 @@
   color: var(--ink);
   font-weight: 700;
 }
+
+.btnSub {
+  display: block;
+  font: 500 11px var(--font-mono), monospace;
+  opacity: 0.9;
+  margin-top: 1px;
+}

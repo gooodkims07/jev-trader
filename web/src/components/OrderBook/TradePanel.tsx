@@ -143,8 +143,9 @@ export default function TradePanel({ apiUrl, snap, pickedPrice, trade }: { apiUr
   const reduces = (side: Side) => (side === "buy" ? info.position.size < 0 : info.position.size > 0);
   const button = (side: Side) => {
     const off = reduceOnly && !reduces(side);
+    // Reduce-only on the side that reduces: the amount on a second line.
     const label = reduceOnly
-      ? reduces(side) ? t("trade.reduceBy", { side: sideWord(side, true), n: amt > 0 ? fmtAmt(Math.min(amt, held)) : "0", base: venue.base }) : sideWord(side, true)
+      ? reduces(side) ? <>{sideWord(side, true)}<span className={styles.btnSub}>{fmtAmt(amt > 0 ? Math.min(amt, held) : 0)} {venue.base}</span></> : sideWord(side, true)
       : t(side === "buy" ? "trade.buyLong" : "trade.sellShort");
     return (
       <button type="button" className={side === "buy" ? styles.buy : styles.sell} disabled={busy || off} title={off ? t(held ? "trade.roWrongSide" : "trade.noHeld") : undefined} onClick={() => send(side)}>
