@@ -83,7 +83,8 @@ export default function TradePanel({ apiUrl, snap, pickedPrice, trade }: { apiUr
   };
   const setByPct = (p: number) => { setPct(p); setAmount(amountAt(p, reduceOnly)); };
   const feeRate = type === "market" ? TAKER : MAKER;
-  const cost = (side: Side) => (amt > 0 ? (amt * refFor(side)) / info.leverage + amt * refFor(side) * feeRate : null);
+  // Margin plus the fee; reduce-only needs no new margin, just the fee.
+  const cost = (side: Side) => (amt > 0 ? (reduceOnly ? 0 : (amt * refFor(side)) / info.leverage) + amt * refFor(side) * feeRate : null);
   const liq = (side: Side) => {
     if (!(amt > 0) || reduceOnly) return null;
     const p = refFor(side), l = info.leverage;
@@ -137,11 +138,20 @@ export default function TradePanel({ apiUrl, snap, pickedPrice, trade }: { apiUr
   const overCap = (side: Side) => !reduceOnly && (openingFor(side) * refFor(side)) / info.leverage > capMargin + 1e-9;
   const missing = !(amt > 0) ? "trade.needAmount" : type === "limit" && !bbo && !(Number(price) > 0) ? "trade.needPrice" : tpsl && !reduceOnly && !(tpN > 0 && slN > 0) ? "trade.needExits" : null;
   const kind = t(type === "market" ? "trade.market" : "trade.limit");
-  const button = (side: Side) => (
-    <button type="button" className={side === "buy" ? styles.buy : styles.sell} disabled={busy} onClick={() => send(side)}>
-      {confirm === side ? t("trade.confirm", { side: sideWord(side, reduceOnly), n: fmtAmt(amt), base: venue.base, kind }) : t(reduceOnly ? (side === "buy" ? "trade.buyRo" : "trade.sellRo") : side === "buy" ? "trade.buyLong" : "trade.sellShort")}
-    </button>
-  );
+  // Reduce-only: only the side that shrinks the position can be used (a long is reduced by selling), and the
+  // button says how much it reduces.
+  const reduces = (side: Side) => (side === "buy" ? info.position.size < 0 : info.position.size > 0);
+  const button = (side: Side) => {
+    const off = reduceOnly && !reduces(side);
+    const label = reduceOnly
+      ? reduces(side) ? t("trade.reduceBy", { side: sideWord(side, true), n: amt > 0 ? fmtAmt(Math.min(amt, held)) : "0", base: venue.base }) : sideWord(side, true)
+      : t(side === "buy" ? "trade.buyLong" : "trade.sellShort");
+    return (
+      <button type="button" className={side === "buy" ? styles.buy : styles.sell} disabled={busy || off} title={off ? t(held ? "trade.roWrongSide" : "trade.noHeld") : undefined} onClick={() => send(side)}>
+        {confirm === side ? t("trade.confirm", { side: sideWord(side, reduceOnly), n: fmtAmt(amt), base: venue.base, kind }) : label}
+      </button>
+    );
+  };
   const side2 = (side: Side) => {
     const c = cost(side), l = liq(side);
     return (
