@@ -87,6 +87,9 @@ export default function TradePanel({ apiUrl, snap, pickedPrice, trade }: { apiUr
     setBbo(false); setPrice((Math.round(p / info.tick) * info.tick + k * info.tick).toFixed(dec));
   };
 
+  // A reduce-only order only shrinks the position: call it a buy / sell, not a long / short.
+  const sideWord = (side: Side, ro: boolean) => t(ro ? (side === "buy" ? "trade.buyRo" : "trade.sellRo") : side === "buy" ? "trade.long" : "trade.short");
+
   const send = async (side: Side) => {
     if (confirm !== side) { setConfirm(side); setMsg(null); return; } // first click: arm; the second sends
     setConfirm(null); setBusy(true); setMsg(null);
@@ -97,8 +100,8 @@ export default function TradePanel({ apiUrl, snap, pickedPrice, trade }: { apiUr
       const r = await fetch(`${base}/trade/order`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${tokenNow()}` }, body: JSON.stringify(body) });
       const res = await r.json();
       if (!r.ok) setMsg({ ok: false, text: res.error ?? t("trade.failed") });
-      else if (type === "market") setMsg({ ok: true, text: t("trade.filled", { side: t(side === "buy" ? "trade.long" : "trade.short"), n: fmtAmt(res.filled), px: res.avgPx ? res.avgPx.toFixed(dec) : "-" }) });
-      else setMsg({ ok: true, text: t("trade.placed", { side: t(side === "buy" ? "trade.long" : "trade.short"), n: fmtAmt(amt), px: res.price?.toFixed(dec) ?? "-" }) });
+      else if (type === "market") setMsg({ ok: true, text: t("trade.filled", { side: sideWord(side, reduceOnly), n: fmtAmt(res.filled), px: res.avgPx ? res.avgPx.toFixed(dec) : "-" }) });
+      else setMsg({ ok: true, text: t("trade.placed", { side: sideWord(side, reduceOnly), n: fmtAmt(amt), px: res.price?.toFixed(dec) ?? "-" }) });
       if (r.ok) { setAmount(""); setPct(0); }
       load();
     } catch { setMsg({ ok: false, text: t("trade.failed") }); }
@@ -118,7 +121,7 @@ export default function TradePanel({ apiUrl, snap, pickedPrice, trade }: { apiUr
   const kind = t(type === "market" ? "trade.market" : "trade.limit");
   const button = (side: Side) => (
     <button type="button" className={side === "buy" ? styles.buy : styles.sell} disabled={invalid} onClick={() => send(side)}>
-      {confirm === side ? t("trade.confirm", { side: t(side === "buy" ? "trade.long" : "trade.short"), n: fmtAmt(amt), base: venue.base, kind }) : t(side === "buy" ? "trade.buyLong" : "trade.sellShort")}
+      {confirm === side ? t("trade.confirm", { side: sideWord(side, reduceOnly), n: fmtAmt(amt), base: venue.base, kind }) : t(reduceOnly ? (side === "buy" ? "trade.buyRo" : "trade.sellRo") : side === "buy" ? "trade.buyLong" : "trade.sellShort")}
     </button>
   );
   const side2 = (side: Side) => {
@@ -199,7 +202,7 @@ export default function TradePanel({ apiUrl, snap, pickedPrice, trade }: { apiUr
         <div className={styles.label}>{t("trade.openOrders", { n: info.orders.length })}</div>
         {info.orders.length === 0 ? <div className={styles.note}>{t("trade.noOrders")}</div> : info.orders.map((o) => (
           <div key={o.ordId} className={styles.order}>
-            <span className={o.side === "buy" ? styles.buyInk : styles.sellInk}>{t(o.side === "buy" ? "trade.long" : "trade.short")}</span>
+            <span className={o.side === "buy" ? styles.buyInk : styles.sellInk}>{sideWord(o.side, o.reduceOnly)}</span>
             <span>{o.price ? o.price.toFixed(dec) : t("trade.market")}</span>
             <span>{fmtAmt(o.filled)}/{fmtAmt(o.size)}</span>
             {o.reduceOnly ? <span className={styles.tag}>{t("trade.ro")}</span> : null}
