@@ -99,11 +99,11 @@ export default function SpikeStatus({ snap, apiUrl }: { snap: SpikeSnapshot | nu
   const [applying, setApplying] = useState(false);
 
   // Close at market now (live): all or half, reduce-only (POST /trade/close). Two clicks: arm, then send.
-  const [closeArm, setCloseArm] = useState<1 | 0.5 | null>(null);
+  const [closeArm, setCloseArm] = useState<number | null>(null);
   const [closing, setClosing] = useState(false);
   const [closeMsg, setCloseMsg] = useState<{ ok: boolean; text: string } | null>(null);
   useEffect(() => { if (!closeArm) return; const id = setTimeout(() => setCloseArm(null), 5000); return () => clearTimeout(id); }, [closeArm]);
-  const closeNow = async (fraction: 1 | 0.5) => {
+  const closeNow = async (fraction: number) => {
     if (closeArm !== fraction) { setCloseArm(fraction); setCloseMsg(null); return; }
     setCloseArm(null);
     let token = "";
@@ -185,11 +185,15 @@ export default function SpikeStatus({ snap, apiUrl }: { snap: SpikeSnapshot | nu
             <ExitBar jev={jev} px={px} t={t} />
             {plan?.live ? (
               <div className={styles.closeRow}>
-                {([0.5, 1] as const).map((f) => (
-                  <button key={f} type="button" className={closeArm === f ? styles.closeArmed : styles.closeBtn} disabled={closing} onClick={() => closeNow(f)}>
-                    {closeArm === f ? t("close.confirm", { what: t(f === 1 ? "close.all" : "close.half") }) : t(f === 1 ? "close.all" : "close.half")}
-                  </button>
-                ))}
+                <span className={styles.labelNote}>{t("close.label")}</span>
+                {[0.1, 0.25, 0.5, 0.75, 1].map((f) => {
+                  const what = f === 1 ? t("close.all") : t("close.pct", { n: f * 100 });
+                  return (
+                    <button key={f} type="button" className={closeArm === f ? styles.closeArmed : styles.closeBtn} disabled={closing} onClick={() => closeNow(f)}>
+                      {closeArm === f ? t("close.confirm", { what }) : what}
+                    </button>
+                  );
+                })}
                 {closeArm ? <span className={styles.labelNote}>{t("close.hint")}</span> : null}
                 {closing ? <span className={styles.labelNote}>{t("close.sending")}</span> : null}
                 {closeMsg ? <span className={closeMsg.ok ? styles.pos : styles.neg}>{closeMsg.text}</span> : null}

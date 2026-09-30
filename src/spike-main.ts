@@ -72,22 +72,22 @@ export async function runSpike(venue: Venue) {
         if (typeof b.ordId !== "string" || !/^\d+$/.test(b.ordId)) return { status: 400, body: { error: "ordId" } };
         try { await venue.manual!.amend(b.ordId, Number(b.price)); return { status: 200, body: { ok: true } }; } catch (e) { return { status: 400, body: { error: (e as Error).message } }; }
       },
-      // Close the position at market now, all of it or half (reduce-only, so it can never open the other way).
+      // Close the position at market now: all, or a share of it (reduce-only, so it can never open the other way).
       "/trade/close": async (req) => {
         const denied = guard(req, "POST");
         if (denied) return denied;
         let b: { fraction?: unknown };
         try { b = (await req.json()) as { fraction?: unknown }; } catch { return { status: 400, body: { error: "body must be JSON" } }; }
         const fraction = Number(b.fraction);
-        if (fraction !== 1 && fraction !== 0.5) return { status: 400, body: { error: "fraction must be 1 or 0.5" } };
+        if (![0.1, 0.25, 0.5, 0.75, 1].includes(fraction)) return { status: 400, body: { error: "fraction must be 0.1, 0.25, 0.5, 0.75 or 1" } };
         try {
           const info = await venue.manual!.info();
           const pos = info.position.size;
           if (!pos) return { status: 409, body: { error: "no position to close" } };
-          // All: the exact size. Half: rounded down to the lot, at least one lot.
-          const size = fraction === 1 ? Math.abs(pos) : Math.max(info.lot, Math.floor((Math.abs(pos) * 0.5) / info.lot + 1e-9) * info.lot);
+          // All: the exact size. A share: rounded down to the lot, at least one lot, at most the position.
+          const size = fraction === 1 ? Math.abs(pos) : Math.min(Math.abs(pos), Math.max(info.lot, Math.floor((Math.abs(pos) * fraction) / info.lot + 1e-9) * info.lot));
           const r = await venue.manual!.place({ side: pos > 0 ? "sell" : "buy", type: "market", size: +size.toFixed(8), reduceOnly: true });
-          console.log(`manual close ${fraction === 1 ? "all" : "half"}: ${r.filled} of ${Math.abs(pos)} ${venue.info.base} at ${r.avgPx}`);
+          console.log(`manual close ${fraction * 100}%: ${r.filled} of ${Math.abs(pos)} ${venue.info.base} at ${r.avgPx}`);
           return { status: 200, body: { ...r, position: pos } };
         } catch (e) {
           console.warn(`manual close refused: ${(e as Error).message}`);
