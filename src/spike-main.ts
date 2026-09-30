@@ -23,6 +23,12 @@ export async function runSpike(venue: Venue) {
         if (!tokenOk(req)) return { status: 401, body: { error: "wrong or missing admin token" } };
         return { status: 200, body: { reference: trader.resetReference() } };
       },
+      // GET ?levels=N: the order book for the dashboard (display only).
+      "/book": async (req) => {
+        if (!venue.depth) return { status: 404, body: { error: "no order book here" } };
+        const levels = Number(new URL(req.url).searchParams.get("levels") ?? 30) || 30;
+        try { return { status: 200, body: await venue.depth(levels) }; } catch (e) { return { status: 502, body: { error: (e as Error).message } }; }
+      },
       // POST with the admin token: move Jev's open position to the take-profit and stop of the current settings.
       "/spike/exits": async (req) => {
         if (req.method !== "POST") return { status: 405, body: { error: "POST" } };

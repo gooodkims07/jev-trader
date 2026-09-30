@@ -1,0 +1,173 @@
+/* order book beside the chart (OKX spike dashboard) */
+.book {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  background: var(--panel);
+  border-radius: 20px;
+  padding: 12px 12px 10px;
+  font: 500 12px var(--font-mono), monospace;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-2);
+}
+
+.head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.title {
+  font: 600 13px var(--font-sans), Inter, system-ui, sans-serif;
+  color: var(--ink);
+}
+
+.step {
+  font: 500 11px var(--font-mono), monospace;
+  background: var(--bg);
+  border: 1px solid var(--border-2);
+  border-radius: 8px;
+  padding: 2px 4px;
+  color: var(--ink-2);
+}
+
+.views {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.views button {
+  appearance: none;
+  border: 1px solid var(--border-2);
+  background: transparent;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font: 500 10.5px var(--font-sans), Inter, system-ui, sans-serif;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.views .viewOn {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--bg);
+}
+
+.cols,
+.row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 4px;
+}
+
+.cols {
+  font: 500 10px var(--font-sans), Inter, system-ui, sans-serif;
+  color: var(--muted-2);
+  padding: 0 4px 4px;
+}
+
+.cols span:not(:first-child),
+.row span:not(:first-child) {
+  text-align: right;
+}
+
+.list {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.row {
+  position: relative;
+  height: 21px;
+  align-items: center;
+  padding: 0 4px;
+}
+
+.row > span {
+  position: relative; /* over the bar */
+}
+
+.row > .bar {
+  position: absolute;
+  right: 0;
+  top: 1px;
+  bottom: 1px;
+  border-radius: 3px;
+}
+
+.bidPx {
+  color: var(--buy-ink);
+}
+
+.askPx {
+  color: var(--sell-ink);
+}
+
+.mid {
+  height: 40px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 4px 0;
+}
+
+.last {
+  font: 600 17px var(--font-mono), monospace;
+}
+
+.arrow {
+  margin-left: 3px;
+  font-size: 14px;
+}
+
+.spread {
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+.empty {
+  color: var(--muted);
+  font: 400 12px var(--font-sans), Inter, system-ui, sans-serif;
+  padding: 12px 4px;
+}
+
+.ratio {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 11px;
+}
+
+.ratioB,
+.ratioS {
+  border: 1px solid;
+  border-radius: 4px;
+  padding: 0 4px;
+  font-size: 10px;
+}
+
+.ratioB,
+.ratioBid {
+  color: var(--buy-ink);
+}
+
+.ratioS,
+.ratioAsk {
+  color: var(--sell-ink);
+}
+
+.ratioBar {
+  flex: 1;
+  display: flex;
+  height: 4px;
+  border-radius: 2px;
+  overflow: hidden;
+  gap: 2px;
+}

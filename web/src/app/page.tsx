@@ -14,6 +14,7 @@ import PnlCurve from "@/components/Spike/PnlCurve";
 import { VenueProvider } from "@/lib/venue";
 import { LangProvider } from "@/lib/i18n";
 import SettingsPanel from "@/components/Settings/SettingsPanel";
+import OrderBook from "@/components/OrderBook/OrderBook";
 import { useState } from "react";
 import styles from "./page.module.css";
 
@@ -36,9 +37,21 @@ export default function Page() {
       <StatsRow latest={feed.latest} avgLatencyMs={feed.avgLatencyMs} meta={feed.meta} />
       <div className={styles.main}>
         <div className={styles.left}>
-          <div className={isKuru ? styles.chartWrap : `${styles.chartWrap} ${styles.chartWrapControls}`}>
-            <FlowChart events={feed.events} latest={feed.latest} />
-          </div>
+          {spikeMode && !isKuru ? (
+            // OKX spike: the order book beside the chart.
+            <div className={`${styles.chartWrap} ${styles.chartWrapControls} ${styles.chartRow}`}>
+              <div className={styles.chartMain}>
+                <FlowChart events={feed.events} latest={feed.latest} />
+              </div>
+              <div className={styles.bookCol}>
+                <OrderBook apiUrl={API_URL} />
+              </div>
+            </div>
+          ) : (
+            <div className={isKuru ? styles.chartWrap : `${styles.chartWrap} ${styles.chartWrapControls}`}>
+              <FlowChart events={feed.events} latest={feed.latest} />
+            </div>
+          )}
           {spikeMode ? <PnlCurve snap={spike} /> : null}
         </div>
         {spikeMode ? (

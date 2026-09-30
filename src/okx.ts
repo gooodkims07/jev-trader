@@ -392,6 +392,21 @@ export class OkxVenue implements Venue {
 
   extras() { return { fundingRatePct: this.fundingRatePct }; }
 
+  /** For the dashboard's order book: one REST read per 400 ms at most, shared by every viewer. */
+  private depthCache: { at: number; levels: number; p: Promise<{ bids: [number, number][]; asks: [number, number][]; last: { price: number; side: Side } | null; ts: number }> } | null = null;
+  depth(levels: number) {
+    const n = Math.min(100, Math.max(1, Math.round(levels)));
+    if (this.depthCache && this.depthCache.levels >= n && Date.now() - this.depthCache.at < 400) return this.depthCache.p;
+    const p = this.api.public<{ asks: string[][]; bids: string[][]; ts: string }[]>("/api/v5/market/books", { instId: this.instId, sz: String(n) }).then(([b]) => {
+      const side = (rows: string[][]) => rows.map((r) => [Number(r[0]), round(Number(r[1]) * this.ctVal, 6)] as [number, number]);
+      const t = this.trades.recent(1)[0];
+      return { bids: side(b?.bids ?? []), asks: side(b?.asks ?? []), last: t ? { price: t.price, side: t.side } : null, ts: Number(b?.ts ?? Date.now()) };
+    });
+    this.depthCache = { at: Date.now(), levels: n, p };
+    p.catch(() => { if (this.depthCache?.p === p) this.depthCache = null; });
+    return p;
+  }
+
   /** 1-minute closes from OKX candles (confirmed ones only), oldest first: recent, then history pages of 100. */
   async closes(minutes: number) {
     type Row = [string, string, string, string, string, string, string, string, string];

@@ -32,6 +32,26 @@
   flex-direction: column;
 }
 
+/* OKX spike: chart and order book side by side */
+.chartRow {
+  flex-direction: row;
+  gap: 12px;
+}
+
+.chartMain {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.bookCol {
+  flex: none;
+  width: clamp(200px, 15vw, 260px);
+  min-height: 0;
+}
+
 /* right column: decision panel (fixed) + feed (fills, clips) */
 .right {
   width: 470px;
@@ -86,5 +106,29 @@
 @media (min-width: 900px) {
   .rightSpike {
     width: clamp(340px, 34vw, 520px);
+  }
+}
+
+/* narrow screens: the order book under the chart */
+@media (max-width: 899.98px) {
+  .chartRow {
+    flex-direction: column;
+  }
+
+  /* no viewport-driven height here: the chart takes its 4:3 shape (phones: FlowChart sizes itself) */
+  .chartMain {
+    flex: none;
+    aspect-ratio: 4 / 3;
+  }
+
+  .bookCol {
+    width: 100%;
+    height: 420px;
+  }
+}
+
+@media (max-width: 640px) {
+  .chartMain {
+    aspect-ratio: auto;
   }
 }

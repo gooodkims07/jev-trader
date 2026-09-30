@@ -201,6 +201,11 @@ export interface Venue {
   checkSize?(size: number): string | null;
   /** Take these resting orders off the book without placing one (the model chose to skip). Resolves to the ids gone. */
   cancel?(ids: OrderId[]): Promise<OrderId[]>;
+  /**
+   * The order book `levels` deep each side, sizes in the base asset, best first; and the last trade. For the
+   * dashboard's order book (OKX: REST, cached briefly). Display only.
+   */
+  depth?(levels: number): Promise<{ bids: [number, number][]; asks: [number, number][]; last: { price: number; side: Side } | null; ts: number }>;
   /** The last `minutes` completed 1-minute closes, oldest first (OKX: from its candles). Seeds the trend shadow at start. */
   closes?(minutes: number): Promise<{ ts: number; close: number }[]>;
   /** Market facts the model sees beyond the book. OKX: the swap's current funding rate. */
