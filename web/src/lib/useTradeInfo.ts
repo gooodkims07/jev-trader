@@ -9,6 +9,8 @@ export interface TradeInfo {
   available: number; equity: number; maxMarginPct: number; leverage: number; marginMode: string; lot: number; min: number; tick: number; mmr: number;
   limits: { buy: number; sell: number } | null; bid: number; ask: number;
   position: { size: number; avgPx: number }; orders: OpenOrder[];
+  /** Today's manual P&L (USDT) and the daily loss limit on hand orders (0 = off). */
+  manualToday?: number; manualDailyLimit?: number;
 }
 /** err: a key of i18n ("trade.noToken", "settings.unauthorized", "trade.unavailable") or the server's message. */
 export interface TradeState { info: TradeInfo | null; err: string | null; reload: () => void }

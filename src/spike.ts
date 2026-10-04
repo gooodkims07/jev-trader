@@ -475,7 +475,11 @@ export class SpikeTrader {
    * Move Jev's open position to the take-profit and stop of the current settings (from its entry), and replace
    * its exits on the exchange when live. Waits for the tick in progress, so no order races it. Null when flat.
    */
-  async applyExits(at?: { tp?: number; sl?: number }): Promise<{ tp: number; sl: number; onExchange: boolean } | null> {
+  /**
+   * at: prices given (a line dragged on the chart). The stop may only move toward the price (a smaller loss)
+   * unless allowWiden (Shift held while dragging): widening a stop is how a -1% stop became a -5% loss.
+   */
+  async applyExits(at?: { tp?: number; sl?: number; allowWiden?: boolean }): Promise<{ tp: number; sl: number; onExchange: boolean } | null> {
     while (this.busy) await Bun.sleep(25);
     this.busy = true;
     try {
@@ -487,6 +491,7 @@ export class SpikeTrader {
         const mid = this.lastMid;
         if (at.tp !== undefined && !(dir * (at.tp - mid) > 0)) throw new Error(`take-profit ${at.tp} must be ${dir > 0 ? "above" : "below"} the price now (${mid})`);
         if (at.sl !== undefined && !(dir * (mid - at.sl) > 0)) throw new Error(`stop ${at.sl} must be ${dir > 0 ? "below" : "above"} the price now (${mid})`);
+        if (at.sl !== undefined && !at.allowWiden && dir * (o.sl - at.sl) > 1e-12) throw new Error(`widen: the stop can only be tightened (now ${o.sl}); hold Shift while dragging to widen it`);
         if (at.tp !== undefined) { o.tp = at.tp; o.tpSet = true; }
         if (at.sl !== undefined) { o.sl = at.sl; o.slSet = true; }
       } else {
@@ -559,6 +564,18 @@ export class SpikeTrader {
   }
 
   // ---- live execution (Jev only; the fade and follow shadows stay simulated) ----
+
+  /**
+   * Today's P&L of manual trading (local day): manual trades closed today, and the open position if it is manual.
+   * For the daily limit on hand orders (RISK_MANUAL_DAILY_LOSS_LIMIT).
+   */
+  manualPnlToday(): number {
+    const day = new Date(); day.setHours(0, 0, 0, 0);
+    const closed = this.tradeRows.filter((r) => isManual(r) && (r.ts ?? 0) >= day.getTime()).reduce((a, r) => a + r.pnlUsd, 0);
+    const o = this.open.get("jev");
+    const open = o && o.manual && this.lastMid ? (o.side === "buy" ? 1 : -1) * (this.lastMid - o.entry) * o.size : 0;
+    return closed + open;
+  }
 
   /** Rows loaded from earlier runs: the session limits count only the trades this run closes (the ones after). */
   private sessionFrom = 0;

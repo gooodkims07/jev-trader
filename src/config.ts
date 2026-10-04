@@ -138,5 +138,7 @@ export const config = {
     positionTakePct: Number(env("RISK_POSITION_TAKE_PCT", "0")),
     /** Hand orders from the dashboard: the margin one order may open, as a share of the account's equity (%). */
     manualMaxMarginPct: Number(env("RISK_MANUAL_MAX_MARGIN_PCT", "50")),
+    /** Hand trading: once today's manual P&L (closed and open) is at or below minus this (USDT), new manual entries are refused for the day. 0 = off. */
+    manualDailyLossLimit: Number(env("RISK_MANUAL_DAILY_LOSS_LIMIT", "10")),
   },
 };

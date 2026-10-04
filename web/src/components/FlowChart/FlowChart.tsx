@@ -73,9 +73,10 @@ export default function FlowChart({
   events: BlockEvent[];
   latest: BlockEvent | null;
   levels?: ChartLevel[];
-  onLevelDrag?: (level: ChartLevel, price: number) => void;
-  /** The last drag's outcome: ok with the new price as text, or refused with the reason. */
-  levelNote?: { ok: boolean; text: string } | null;
+  /** shift: Shift was held at the drop (asks to widen a stop, which is otherwise refused). */
+  onLevelDrag?: (level: ChartLevel, price: number, opts: { shift: boolean }) => void;
+  /** The last drag's outcome: ok with the new price as text, or refused with the reason (or an i18n key in `key`). */
+  levelNote?: { ok: boolean; text: string; key?: string } | null;
 }) {
   const venue = useVenue();
   const { t } = useLang();
@@ -573,7 +574,7 @@ export default function FlowChart({
                     if (e instanceof KeyboardEvent) return; // Escape: no change
                     if (Math.abs(last - lv.price) < tick / 2) return;
                     setHeld({ key: lv.key, price: last, until: Date.now() + 5000 });
-                    onLevelDrag!(lv, +last.toFixed(venue.priceDecimals));
+                    onLevelDrag!(lv, +last.toFixed(venue.priceDecimals), { shift: (e as PointerEvent).shiftKey });
                   };
                   const esc = (e: KeyboardEvent) => { if (e.key === "Escape") up(e); };
                   window.addEventListener("pointermove", move); window.addEventListener("pointerup", up); window.addEventListener("keydown", esc);
@@ -594,7 +595,7 @@ export default function FlowChart({
                 );
               }); })() : null}
               {zoomable && levelNote ? (
-                <text className={styles.levelLabel} x={w - TAG_W - 14} y={model.plotTop - 10} textAnchor="end" fill={levelNote.ok ? "var(--buy-ink)" : "var(--sell-ink)"}>{levelNote.ok ? t("level.moved", { px: levelNote.text }) : t("level.refused", { why: levelNote.text })}</text>
+                <text className={styles.levelLabel} x={w - TAG_W - 14} y={model.plotTop - 10} textAnchor="end" fill={levelNote.ok ? "var(--buy-ink)" : "var(--sell-ink)"}>{levelNote.key ? t(levelNote.key as "level.widen") : levelNote.ok ? t("level.moved", { px: levelNote.text }) : t("level.refused", { why: levelNote.text })}</text>
               ) : null}
 
               <g className={styles.tag} style={{ transform: `translateY(${model.endY.toFixed(1)}px)` }}>

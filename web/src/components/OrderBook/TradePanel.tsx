@@ -66,12 +66,18 @@ export default function TradePanel({ apiUrl, snap, pickedPrice, trade }: { apiUr
   const limitPx = bbo ? null : Number(price);
   const refFor = (side: Side) => (type === "market" || bbo || !(limitPx! > 0) ? (side === "buy" ? info.ask : info.bid) : limitPx!);
   const lotDown = (x: number) => Math.max(0, Math.floor(x / info.lot + 1e-9) * info.lot);
-  // What one order may open: the balance, and the safety cap (a share of equity as margin), whichever is less.
+  // What may be opened: the balance, and the position limit (the whole position's margin within a share of
+  // equity), whichever is less. Adding to the position held counts what is already open.
   const capMargin = ((info.equity ?? info.available) * (info.maxMarginPct ?? 100)) / 100;
   const openPx = limitPx && limitPx > 0 && type === "limit" && !bbo ? limitPx : mid;
-  const maxOpen = lotDown((Math.min(info.available * 0.98, capMargin) * info.leverage) / openPx);
   const pos = info.position.size;
-  const maxBuy = maxOpen + (pos < 0 ? -pos : 0), maxSell = maxOpen + (pos > 0 ? pos : 0);
+  const capUnits = (capMargin * info.leverage) / openPx, balUnits = (info.available * 0.98 * info.leverage) / openPx;
+  const openRoom = (side: Side) => lotDown(Math.min(balUnits, Math.max(0, capUnits - ((side === "buy") === (pos > 0) ? Math.abs(pos) : 0))));
+  const maxOpen = openRoom(pos >= 0 ? "buy" : "sell");
+  const maxBuy = openRoom("buy") + (pos < 0 ? -pos : 0), maxSell = openRoom("sell") + (pos > 0 ? pos : 0);
+  // The daily limit on manual trading: today's manual P&L at or below minus the limit blocks new entries.
+  const dayLimit = info.manualDailyLimit ?? 0, today = info.manualToday ?? 0;
+  const dayBlocked = dayLimit > 0 && today <= -dayLimit;
   const amt = Number(amount);
   const fmtAmt = (x: number) => String(+x.toFixed(6));
   // The slider's 100%: what may be opened, or with reduce-only the position held (100% = all of it, exactly).
@@ -106,6 +112,7 @@ export default function TradePanel({ apiUrl, snap, pickedPrice, trade }: { apiUr
   const send = async (side: Side) => {
     // Something missing: say what (the buttons stay clickable, a greyed-out one looks broken).
     if (missing) { setConfirm(null); setMsg({ ok: false, text: t(missing) }); return; }
+    if (!reduceOnly && dayBlocked) { setConfirm(null); setMsg({ ok: false, text: t("trade.dayBlocked", { pnl: today.toFixed(2), limit: dayLimit }) }); return; }
     if (overCap(side)) { setConfirm(null); setMsg({ ok: false, text: t("trade.overCap", { pct: info.maxMarginPct, cap: capMargin.toFixed(2), n: fmtAmt(side === "buy" ? maxBuy : maxSell) }) }); return; }
     if (confirm !== side) { setConfirm(side); setMsg(null); return; } // first click: arm; the second sends
     setConfirm(null); setBusy(true); setMsg(null);
@@ -133,9 +140,9 @@ export default function TradePanel({ apiUrl, snap, pickedPrice, trade }: { apiUr
     } catch { setMsg({ ok: false, text: t("trade.failed") }); }
   };
 
-  const pos0 = info.position.size;
-  const openingFor = (side: Side) => Math.max(0, amt - ((side === "buy" ? pos0 < 0 : pos0 > 0) ? Math.abs(pos0) : 0));
-  const overCap = (side: Side) => !reduceOnly && (openingFor(side) * refFor(side)) / info.leverage > capMargin + 1e-9;
+  // The position after the order (adding to it, or what is left once the other side is closed) against the limit.
+  const afterFor = (side: Side) => ((side === "buy") === (pos >= 0) ? Math.abs(pos) + amt : Math.max(0, amt - Math.abs(pos)));
+  const overCap = (side: Side) => !reduceOnly && afterFor(side) > Math.abs(pos) && (afterFor(side) * refFor(side)) / info.leverage > capMargin + 1e-9;
   const missing = !(amt > 0) ? "trade.needAmount" : type === "limit" && !bbo && !(Number(price) > 0) ? "trade.needPrice" : tpsl && !reduceOnly && !(tpN > 0 && slN > 0) ? "trade.needExits" : null;
   const kind = t(type === "market" ? "trade.market" : "trade.limit");
   // Reduce-only: only the side that shrinks the position can be used (a long is reduced by selling), and the
@@ -201,6 +208,8 @@ export default function TradePanel({ apiUrl, snap, pickedPrice, trade }: { apiUr
       </div>
       <div className={styles.kv}><span>{t("trade.available")}</span><b>{info.available.toFixed(2)} USDT</b></div>
       <div className={styles.kv}><span>{t("trade.cap")}</span><b>{t("trade.capIs", { pct: info.maxMarginPct, cap: capMargin.toFixed(2) })}</b></div>
+      {dayLimit > 0 ? <div className={styles.kv}><span>{t("trade.today")}</span><b className={dayBlocked ? styles.bad : undefined}>{t("trade.todayIs", { pnl: `${today >= 0 ? "+" : ""}${today.toFixed(2)}`, limit: dayLimit })}</b></div> : null}
+      {dayBlocked ? <div className={styles.bad}>{t("trade.dayBlocked", { pnl: today.toFixed(2), limit: dayLimit })}</div> : null}
       <div className={styles.kv}><span>{t("trade.maxBuy")} <b>{fmtAmt(maxBuy)}</b></span><span>{t("trade.maxSell")} <b>{fmtAmt(maxSell)}</b></span></div>
 
       <label className={styles.check}><input type="checkbox" checked={reduceOnly} onChange={(e) => { const ro = e.target.checked; setReduceOnly(ro); if (pct) setAmount(amountAt(pct, ro)); }} /> {t("trade.reduceOnly")}</label>

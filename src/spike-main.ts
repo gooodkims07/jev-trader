@@ -85,7 +85,7 @@ export async function runSpike(venue: Venue) {
       "/trade": async (req) => {
         const denied = guard(req, "GET");
         if (denied) return denied;
-        try { return { status: 200, body: await venue.manual!.info() }; } catch (e) { return { status: 502, body: { error: (e as Error).message } }; }
+        try { return { status: 200, body: { ...(await venue.manual!.info()), manualToday: trader.manualPnlToday(), manualDailyLimit: config.risk.manualDailyLossLimit } }; } catch (e) { return { status: 502, body: { error: (e as Error).message } }; }
       },
       "/trade/order": async (req) => {
         const denied = guard(req, "POST");
@@ -105,15 +105,21 @@ export async function runSpike(venue: Venue) {
         if (type === "limit" && !b.bbo && !(price! > 0)) return refuse("a limit order needs a price");
         if ((tpPct !== null || slPct !== null) && !(tpPct! > 0 && tpPct! <= 50 && slPct! > 0 && slPct! <= 50)) return refuse("take-profit and stop must both be between 0 and 50%");
         try {
-          // Safety: the margin the order opens (the part beyond closing the position) may use at most
-          // RISK_MANUAL_MAX_MARGIN_PCT of the equity.
+          // Safety, for anything but reduce-only:
+          // - the daily limit: once today's manual P&L is at or below -RISK_MANUAL_DAILY_LOSS_LIMIT, no new entries today;
+          // - the position limit: the whole position after the order (not just this order) may use at most
+          //   RISK_MANUAL_MAX_MARGIN_PCT of the equity as margin, so splitting an order does not get round it.
           if (!b.reduceOnly) {
+            const limit = config.risk.manualDailyLossLimit, today = trader.manualPnlToday();
+            if (limit > 0 && today <= -limit) return refuse(`daily limit: today's manual P&L is ${today.toFixed(2)} USDT, at or past -${limit} USDT; no new manual entries until tomorrow (reduce-only and closing still work)`);
             const info = await venue.manual!.info();
             const px = type === "limit" && !b.bbo ? price! : side === "buy" ? info.ask : info.bid;
-            const pos = info.position.size, closing = (side === "buy" ? pos < 0 : pos > 0) ? Math.abs(pos) : 0;
-            const margin = (Math.max(0, size - closing) * px) / info.leverage;
+            const pos = info.position.size, same = pos === 0 || (side === "buy") === (pos > 0);
+            const after = same ? Math.abs(pos) + size : Math.max(0, size - Math.abs(pos)); // position size after the order
+            const margin = (after * px) / info.leverage;
             const cap = (info.equity * info.maxMarginPct) / 100;
-            if (margin > cap + 1e-9) return refuse(`margin ${margin.toFixed(2)} USDT is over the limit: ${info.maxMarginPct}% of equity = ${cap.toFixed(2)} USDT (max about ${Math.floor((cap * info.leverage) / px + closing)} ${venue.info.base})`);
+            const room = Math.max(0, Math.floor((cap * info.leverage) / px - (same ? Math.abs(pos) : 0)) + (same ? 0 : Math.abs(pos)));
+            if (after > Math.abs(pos) && margin > cap + 1e-9) return refuse(`position limit: the position after this order would need ${margin.toFixed(2)} USDT margin, over ${info.maxMarginPct}% of equity = ${cap.toFixed(2)} USDT (this order: at most about ${room} ${venue.info.base})`);
           }
           const r = await venue.manual!.place({ side, type, price, bbo: !!b.bbo, size, reduceOnly: !!b.reduceOnly });
           if (tpPct !== null && slPct !== null && !b.reduceOnly) trader.noteManualExits(r.ordId, tpPct, slPct);
@@ -166,12 +172,12 @@ export async function runSpike(venue: Venue) {
         if (req.method !== "POST") return { status: 405, body: { error: "POST" } };
         if (!config.adminToken) return { status: 403, body: { error: "read-only: start the server with ADMIN_TOKEN" } };
         if (!tokenOk(req)) return { status: 401, body: { error: "wrong or missing admin token" } };
-        // Optional body { tp?, sl? }: those prices (a line dragged on the chart); none: the settings' levels.
-        let at: { tp?: number; sl?: number } | undefined;
+        // Optional body { tp?, sl?, allowWiden? }: those prices (a line dragged on the chart); none: the settings' levels.
+        let at: { tp?: number; sl?: number; allowWiden?: boolean } | undefined;
         const text = await req.text();
         if (text.trim()) {
-          try { const b = JSON.parse(text) as { tp?: unknown; sl?: unknown }; at = { ...(b.tp !== undefined ? { tp: Number(b.tp) } : {}), ...(b.sl !== undefined ? { sl: Number(b.sl) } : {}) }; } catch { return { status: 400, body: { error: "body must be JSON" } }; }
-          if (Object.values(at).some((v) => !(v! > 0))) return { status: 400, body: { error: "prices must be above 0" } };
+          try { const b = JSON.parse(text) as { tp?: unknown; sl?: unknown; allowWiden?: unknown }; at = { ...(b.tp !== undefined ? { tp: Number(b.tp) } : {}), ...(b.sl !== undefined ? { sl: Number(b.sl) } : {}) }; if (b.allowWiden === true) at.allowWiden = true; } catch { return { status: 400, body: { error: "body must be JSON" } }; }
+          if ([at.tp, at.sl].some((v) => v !== undefined && !(v > 0))) return { status: 400, body: { error: "prices must be above 0" } };
         }
         try {
           const r = await trader.applyExits(at);

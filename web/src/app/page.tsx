@@ -40,17 +40,19 @@ export default function Page() {
     ] : []),
   ];
   // A dragged line: an order line amends the order's price; the take-profit or stop line moves that exit on OKX.
-  const [levelNote, setLevelNote] = useState<{ ok: boolean; text: string } | null>(null);
-  const onLevelDrag = async (lv: ChartLevel, price: number) => {
+  const [levelNote, setLevelNote] = useState<{ ok: boolean; text: string; key?: string } | null>(null);
+  const onLevelDrag = async (lv: ChartLevel, price: number, opts: { shift: boolean }) => {
     const token = adminToken();
-    const say = (ok: boolean, text: string) => { setLevelNote({ ok, text }); setTimeout(() => setLevelNote(null), 5000); };
+    const say = (ok: boolean, text: string, key?: string) => { setLevelNote({ ok, text, key }); setTimeout(() => setLevelNote(null), 6000); };
     if (!token) return say(false, "no admin token");
     const base = API_URL.replace(/\/+$/, "");
-    const [path, body] = lv.kind === "tp" || lv.kind === "sl" ? ["/spike/exits", { [lv.kind]: price }] : ["/trade/amend", { ordId: lv.key, price }];
+    // A stop may only be tightened; Shift held at the drop asks to widen it.
+    const [path, body] = lv.kind === "tp" || lv.kind === "sl" ? ["/spike/exits", { [lv.kind]: price, ...(lv.kind === "sl" && opts.shift ? { allowWiden: true } : {}) }] : ["/trade/amend", { ordId: lv.key, price }];
     try {
       const r = await fetch(`${base}${path}`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
       const res = await r.json();
-      say(r.ok, r.ok ? price.toFixed(feed.meta?.venue?.priceDecimals ?? 4) : String(res.error ?? r.status));
+      const err = String(res.error ?? r.status);
+      say(r.ok, r.ok ? price.toFixed(feed.meta?.venue?.priceDecimals ?? 4) : err, !r.ok && err.startsWith("widen") ? "level.widen" : undefined);
       trade.reload();
     } catch { say(false, "network"); }
   };

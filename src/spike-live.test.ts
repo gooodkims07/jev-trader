@@ -401,6 +401,36 @@ test("restart: a position taken over keeps the exits the last run left on the ex
   } finally { reset(); }
 });
 
+test("stop moved by hand: only tightened, unless widening is asked for", async () => {
+  try {
+    config.tradeSize = 5; config.okx.leverage = 5; config.risk.sessionStopLoss = 0;
+    const f = liveVenue();
+    const t = new SpikeTrader(f.v, says("buy"), () => {});
+    let b = await openLong(t, f, 22000);
+    await t.onBlock(b++);
+    const mid = 2 * 0.994, sl0 = t.snapshot().open.find((o) => o.who === "jev")!.sl;
+    await t.applyExits({ sl: sl0 + 0.01 }); // tighter: fine
+    await expect(t.applyExits({ sl: sl0 - 0.01 })).rejects.toThrow(/widen/); // wider: refused
+    expect(t.snapshot().open.find((o) => o.who === "jev")!.sl).toBeCloseTo(sl0 + 0.01, 9);
+    await t.applyExits({ sl: sl0 - 0.01, allowWiden: true }); // asked for
+    expect(t.snapshot().open.find((o) => o.who === "jev")!.sl).toBeCloseTo(sl0 - 0.01, 9);
+    expect(mid).toBeGreaterThan(sl0);
+  } finally { reset(); }
+});
+
+test("manualPnlToday: a manual position's open P&L counts; Jev's own does not", async () => {
+  try {
+    config.tradeSize = 5; config.okx.leverage = 5; config.risk.sessionStopLoss = 0;
+    const f = liveVenue();
+    const t = new SpikeTrader(f.v, says("hold"), () => {});
+    const before = t.manualPnlToday(); // manual trades closed earlier today (kept across restarts) count too
+    f.ex.pos = 10; f.ex.avg = 2;
+    let b = await settle(t, 23000);
+    f.setMid(1.9); await t.onBlock(b++);
+    expect(t.manualPnlToday() - before).toBeCloseTo(-1, 6); // 10 x -0.1, open, manual
+  } finally { reset(); }
+});
+
 test("live and dry-run records are kept apart: each mode loads only its own", async () => {
   const f = liveVenue();
   const live = new SpikeTrader(f.v, says("hold"), () => {});
