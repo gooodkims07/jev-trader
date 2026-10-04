@@ -32,6 +32,10 @@
         "text": "레버리지 상향, 주문 수량 증가, 손절 해제처럼 위험이 커지는 변경은 대표가 결정합니다. 위험을 줄이는 변경은 바로 반영 검토로 보냅니다."
       },
       {
+        "title": "가상 거래는 질문 없이 리서치팀이 기록합니다.",
+        "text": "되돌림, 추종, 추세는 실제 주문 없이 성적만 비교하는 가상 전략입니다. 돈이 움직이지 않으니 판단할 것은 없고, 전략을 실거래로 바꿀지 정할 때 쓸 성적만 모읍니다."
+      },
+      {
         "title": "보안 알림은 질문 없이 바로 대표 보고로 보냅니다.",
         "text": "새 기기 로그인이나 API 키 유출 의심은 놓쳤을 때 피해가 가장 크기 때문에 단계를 줄였습니다."
       }
@@ -48,7 +52,7 @@
           {
             "key": "bot_alert",
             "label": "봇 알림",
-            "criteria": "An automated alert from the company's own trading bot: a spike detected, an order filled, a take-profit or stop-loss hit, a position taken over, an order refused, or the bot stopping.",
+            "criteria": "An automated alert from the company's own trading bot about its real trading: a spike detected, a real order filled, a take-profit or stop-loss hit, a position taken over, an order refused, or the bot stopping. Not a simulated (virtual, shadow) comparison trade.",
             "next": "q:bot_severity",
             "kw": [
               "jev-trader",
@@ -139,6 +143,18 @@
               "정산",
               "보고서",
               "월간"
+            ]
+          },
+          {
+            "key": "virtual",
+            "label": "가상 거래",
+            "next": "a:shadow_log",
+            "criteria": "A report about a simulated (paper, shadow) trade of a comparison strategy (fade, follow, trend): the subject is tagged as virtual and the body says no real order was sent, so no real money moved. Not the company's real trades.",
+            "kw": [
+              "가상",
+              "shadow",
+              "실제 주문 없음",
+              "비교용"
             ]
           },
           {
@@ -336,6 +352,12 @@
         "task": "reply",
         "template": "{sender}님, 요청하신 거래 내역과 손익 자료를 OKX 기록과 봇 기록에서 모아 정리해 드리겠습니다."
       },
+      "shadow_log": {
+        "name": "가상 성적 기록",
+        "dept": "리서치팀",
+        "task": "assign",
+        "template": "{subject} 건을 가상 전략 성적표에 기록했습니다. 실제 돈은 움직이지 않았습니다."
+      },
       "hold": {
         "name": "보류",
         "dept": "접수",
@@ -358,10 +380,10 @@
       "body": "세션 손익이 -4.42 USDT로 세션 손절 한도(-4 USDT)를 넘어 봇이 포지션을 청산하고 정지했습니다. 다시 켤 때까지 새 주문은 나가지 않습니다."
     },
     {
-      "t": "주문 거부 알림",
-      "sender": "jev-trader 봇",
-      "subject": "[spike] 수동 주문 거부",
-      "body": "대시보드 지정가 매수 400 XRP 주문이 거부되었습니다(refused). 사유: 주문 증거금이 한도(자산의 50%)를 넘습니다."
+      "t": "가상 추세 진입",
+      "sender": "jev-trader 봇 (가상)",
+      "subject": "[가상 추세] 진입: 롱 20 XRP",
+      "body": "비교용 가상 거래(shadow, 실제 주문 없음)입니다. 추세 전략이 롱 20 XRP를 1.5314에 진입했습니다."
     },
     {
       "t": "유지증거금 경고",

@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Alerts } from "./alerts";
-import { alertFor } from "./spike-main";
+import { alertFor, shadowAlert } from "./spike-main";
 import type { BlockEvent } from "./trader";
 
 test("alerts: ids grow, kept on disk across a restart, read back by `after`", () => {
@@ -26,4 +26,13 @@ test("alertFor: exits, session stops, entries and manual changes become alerts; 
   expect(alertFor("MANUAL position taken over: long 450 at 1.496", e, "XRP", "USDT")).toMatchObject({ kind: "manual", subject: "[spike] 수동 포지션 인계" });
   expect(alertFor("EXIT time -0.1%", e, "XRP", "USDT")!.body).toContain("롱 20 XRP");
   expect(alertFor("MANUAL position taken over: long 292 at 1.4698164383561645", e, "XRP", "USDT")!.body).toContain("at 1.4698\n현재가 1.5000");
+});
+
+test("shadowAlert: a virtual trade is marked as such, with its result on a close", () => {
+  const o = shadowAlert({ who: "trend", what: "open", side: "buy", price: 1.53141, size: 20 }, "XRP", "USDT");
+  expect(o.subject).toBe("[가상 추세] 진입: 롱 20 XRP");
+  expect(o.body).toContain("실제 주문 없음");
+  const c = shadowAlert({ who: "fade", what: "close", side: "sell", price: 1.5, size: 20, reason: "take-profit", pnlPct: 1.2, pnlUsd: 0.36 }, "XRP", "USDT");
+  expect(c.subject).toBe("[가상 되돌림] 청산 (익절): 숏 20 XRP");
+  expect(c.body).toContain("결과 +1.200% (+0.3600 USDT)");
 });

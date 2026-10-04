@@ -151,6 +151,9 @@ type Who = "jev" | "fade" | "follow" | "trend";
  * moved by hand (a line dragged on the chart), so adds keep it instead of recomputing it from the settings.
  */
 interface Open { tpSet?: boolean; slSet?: boolean; lev?: number; peak?: number; who: Who; side: Side; entry: number; size: number; adds: number; openedAt: number; spikeBlock: number; tp: number; sl: number; openedTs?: number; exitsOnExchange?: boolean; entryFees?: number; mfe?: number; mae?: number; manual?: boolean }
+/** A shadow strategy's trade event (simulated: no order is sent). */
+export interface ShadowEvent { who: Exclude<Who, "jev">; what: "open" | "add" | "close"; side: Side; price: number; size: number; reason?: string; pnlPct?: number; pnlUsd?: number }
+
 /** What a spike did to one strategy's position. */
 type Effect = "open" | "add" | "reverse" | "hold" | "out" | "not-asked" | "observed";
 
@@ -195,6 +198,8 @@ export interface SpikeSnapshot {
 export class SpikeTrader {
   readonly history: BlockEvent[] = [];
   onHalt: (reason: string) => void = () => {};
+  /** A simulated (shadow) strategy opened, added to or closed a position: for the coin-trade office's alerts. */
+  onShadow: (e: ShadowEvent) => void = () => {};
   /** Mid per tick with its block (a second), newest last; six minutes kept. */
   private hist: { b: number; mid: number }[] = [];
   private busy = false;
@@ -908,7 +913,7 @@ export class SpikeTrader {
     o.adds++;
     o.tp = o.entry * (1 + (dir * this.tpPct) / 100);
     o.sl = o.entry * (1 - (dir * this.slPct) / 100);
-    if (o.who !== "jev") return { quote: null, fill: null };
+    if (o.who !== "jev") { this.onShadow({ who: o.who, what: "add", side: o.side, price, size: o.size }); return { quote: null, fill: null }; }
     const fee = add * price * config.spike.takerFeeRate;
     this.feesUsd += fee;
     this.realized -= fee;
@@ -924,7 +929,7 @@ export class SpikeTrader {
     const dir = side === "buy" ? 1 : -1;
     const o: Open = { lev: config.okx.leverage, who, side, entry, size, adds: 0, openedAt: block, spikeBlock: block, tp: entry * (1 + (dir * this.tpPct) / 100), sl: entry * (1 - (dir * this.slPct) / 100) };
     this.open.set(who, o);
-    if (who !== "jev") return { quote: null, fill: null };
+    if (who !== "jev") { this.onShadow({ who, what: "open", side, price: entry, size }); return { quote: null, fill: null }; }
     const fee = size * entry * config.spike.takerFeeRate;
     this.feesUsd += fee;
     this.realized -= fee;
@@ -954,7 +959,7 @@ export class SpikeTrader {
     const row: TradeRow = { type: "trade", instId: this.venue.info.market, live: this.venue.live, who: o.who, side: o.side, spikeBlock: o.spikeBlock, openedAt: o.openedAt, closedAt: block, heldMin: round((block - o.openedAt) / 60, 1), entry: o.entry, exit, size: o.size, adds: o.adds, reason, pnlPct: round(pnlPct, 4), roePct: round(pnlPct * this.lev(o), 2), pnlUsd: round(pnlUsd, 5), ts: Date.now(), ...this.excursionFields(o) };
     this.tradeRows.push(row);
     this.log(row);
-    if (o.who !== "jev") return { quote: null, fill: null, pnlPct };
+    if (o.who !== "jev") { this.onShadow({ who: o.who, what: "close", side: o.side, price: exit, size: o.size, reason, pnlPct, pnlUsd }); return { quote: null, fill: null, pnlPct }; }
     const exitFee = config.spike.takerFeeRate * exit * o.size;
     this.feesUsd += exitFee;
     this.realized += dir * (exit - o.entry) * o.size - exitFee;

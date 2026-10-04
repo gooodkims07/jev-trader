@@ -1,7 +1,7 @@
 /** STRATEGY=spike: wire the SpikeTrader to the server and the clock. index.ts hands over here. */
 import { config } from "./config";
 import { startServer } from "./server";
-import { SpikeTrader, createSpikeModel } from "./spike";
+import { SpikeTrader, createSpikeModel, type ShadowEvent } from "./spike";
 import { instrumentHandler, settingsHandler, tokenOk } from "./settings";
 import type { Venue } from "./venue";
 import { Alerts } from "./alerts";
@@ -10,6 +10,19 @@ import type { BlockEvent } from "./trader";
 const REASON_KO: Record<string, string> = { "take-profit": "익절", "stop-loss": "손절", time: "시간 만료", manual: "수동 청산", reverse: "반대 전환", switch: "코인 변경", shutdown: "봇 종료", "session-stop": "세션 손절", "session-take": "세션 익절" };
 
 /** A bot note worth telling the office about, as an alert (subject in Korean, the note itself in the body); else null. */
+const SHADOW_KO: Record<ShadowEvent["who"], string> = { fade: "되돌림", follow: "추종", trend: "추세" };
+
+/** A shadow strategy's trade as an alert, marked virtual (가상) in the subject and body: no money moved. */
+export function shadowAlert(e: ShadowEvent, base: string, ccy: string, priceDecimals = 4): { subject: string; body: string } {
+  const name = SHADOW_KO[e.who], side = e.side === "buy" ? "롱" : "숏", px = e.price.toFixed(priceDecimals);
+  const what = e.what === "open" ? "진입" : e.what === "add" ? "추가 매수" : `청산 (${REASON_KO[e.reason ?? ""] ?? e.reason})`;
+  const result = e.what === "close" ? `, 결과 ${(e.pnlPct ?? 0) >= 0 ? "+" : ""}${(e.pnlPct ?? 0).toFixed(3)}% (${(e.pnlUsd ?? 0) >= 0 ? "+" : ""}${(e.pnlUsd ?? 0).toFixed(4)} ${ccy})` : "";
+  return {
+    subject: `[가상 ${name}] ${what}: ${side} ${e.size} ${base}`,
+    body: `비교용 가상 거래(shadow, 실제 주문 없음)입니다. ${name} 전략이 ${side} ${e.size} ${base}를 ${px}에 ${what}했습니다${result}.`,
+  };
+}
+
 export function alertFor(note: string, e: BlockEvent, base: string, ccy: string, priceDecimals = 4): { kind: string; subject: string; body: string } | null {
   const pos = e.position.side === "flat" ? "포지션 없음" : `${e.position.side === "long" ? "롱" : "숏"} ${e.position.size} ${base}`;
   // Long prices in the note (an average entry) at the tick.
@@ -178,6 +191,7 @@ export async function runSpike(venue: Venue) {
     }
     else if (Date.now() - lastBeat > 300_000) { lastBeat = Date.now(); console.log(`#${e.block} ${px(e.mid)} waiting for a spike · position ${e.position.side} · pnl ${e.totals.pnlUsd} ${info.quoteCcy}`); }
   }, (block, fill) => server.broadcastFill(block, fill));
+  trader.onShadow = (e) => { const a = shadowAlert(e, info.base, info.quoteCcy, info.priceDecimals); alerts.add("shadow", a.subject, a.body, "jev-trader 봇 (가상)"); };
   console.log(`jev-trader · ${info.label} · model=${model.name} · ${info.market} · ${venue.live ? "LIVE" : "DRY RUN"} · ${trader.describe()} · :${config.port}`);
   alerts.add("start", "[spike] 봇 시작", `봇이 ${venue.live ? "실거래" : "모의"}로 시작했습니다. ${info.market}, ${trader.describe()}`);
 
