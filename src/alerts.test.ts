@@ -15,6 +15,7 @@ test("alerts: ids grow, kept on disk across a restart, read back by `after`", ()
   expect(b.since(0).alerts.map((v) => v.subject)).toEqual(["s1", "s2"]);
   expect(b.since(x.id).alerts.map((v) => v.subject)).toEqual(["s2"]);
   expect(b.since(y.id)).toEqual({ alerts: [], last: y.id });
+  expect(b.add("start", "a · b", "x — y · z").body).toBe("x - y, z");
 });
 
 test("alertFor: exits, session stops, entries and manual changes become alerts; quiet notes do not", () => {

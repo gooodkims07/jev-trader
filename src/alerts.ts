@@ -26,6 +26,9 @@ export class Alerts {
   }
 
   add(kind: string, subject: string, body: string, sender = "jev-trader 봇"): Alert {
+    // The office shows these: no middle dots or dashes there (the bot's own log lines use them).
+    const plain = (t: string) => t.replace(/ · /g, ", ").replace(/·/g, ", ").replace(/[—–]/g, "-");
+    subject = plain(subject); body = plain(body); sender = plain(sender);
     const id = Math.max(Date.now() * 1000, this.last + 1); // grows even within one millisecond
     this.last = id;
     const a: Alert = { id, ts: Date.now(), kind, sender, subject, body };

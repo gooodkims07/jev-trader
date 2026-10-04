@@ -99,7 +99,7 @@
           {
             "key": "funds",
             "label": "입출금",
-            "criteria": "Money moving into or out of the account: a deposit arriving, a withdrawal request or confirmation, a transfer between accounts, or a request to send funds to someone.",
+            "criteria": "Money moving into or out of the account: a deposit arriving, a withdrawal request, a notice that a withdrawal was made, a transfer between accounts, or a request to send funds to someone.",
             "next": "q:outflow",
             "kw": [
               "출금",
@@ -188,23 +188,25 @@
           {
             "label": "점검 필요",
             "next": "a:check",
-            "criteria": "Something to look at soon but no money at immediate risk: an order refused, a hand-made position taken over, an exit that could not be placed on the exchange, a mismatch between the bot and the exchange.",
+            "criteria": "Something to look at soon but no money at immediate risk: an order refused, a hand-made position taken over, an exit that could not be placed on the exchange, a mismatch between the bot and the exchange, or not enough balance for the bot's next order.",
             "kw": [
               "거부",
               "refused",
               "인계",
-              "불일치"
+              "불일치",
+              "잔고 부족"
             ]
           },
           {
             "label": "즉시 조치",
             "next": "a:urgent",
-            "criteria": "Money at risk now or the bot has stopped: the session stop-loss halted the bot, a position is near liquidation, losses are piling up, or the bot crashed with a position open.",
+            "criteria": "Money at risk now or the bot has stopped: the session stop-loss halted the bot, an open position has no stop-loss order on the exchange, a position is near its liquidation price, a liquidation or auto-deleveraging happened, losses are piling up, or the bot crashed with a position open.",
             "kw": [
               "session-stop",
               "정지",
-              "청산 위험",
-              "멈췄"
+              "손절 없는",
+              "청산가 근접",
+              "강제청산"
             ]
           }
         ]
@@ -236,8 +238,8 @@
       "outflow": {
         "type": "noul",
         "label": "외부로 출금?",
-        "instructions": "Does this message ask to move money out of the trading account to an outside address or person?",
-        "critTrue": "A withdrawal request, a request to send USDT or coins to an outside wallet, exchange, or person.",
+        "instructions": "Does this message ask to move money out of the trading account, or report that money has left it, to an outside address or person?",
+        "critTrue": "A withdrawal request, a notice that a withdrawal was made or is being processed, a request to send USDT or coins to an outside wallet, exchange, or person.",
         "critFalse": "A deposit arriving, a transfer between the company's own accounts or sub-accounts, a balance confirmation.",
         "yes": {
           "next": "a:withdraw",

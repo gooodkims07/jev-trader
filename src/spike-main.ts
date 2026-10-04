@@ -6,6 +6,8 @@ import { instrumentHandler, settingsHandler, tokenOk } from "./settings";
 import type { Venue } from "./venue";
 import { Alerts } from "./alerts";
 import { buildBrief } from "./brief";
+import { AccountWatch } from "./watch";
+import { OkxApi } from "./okx-api";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import type { BlockEvent } from "./trader";
 
@@ -222,6 +224,12 @@ export async function runSpike(venue: Venue) {
     try { if (existsSync(BRIEF_STATE)) last = (JSON.parse(readFileSync(BRIEF_STATE, "utf8")) as { last?: string }).last ?? ""; } catch { /* none yet */ }
     if (last !== today()) sendBrief().catch((e) => console.warn(`market brief: ${(e as Error).message}`));
   }, 60_000);
+
+  // Live OKX: watch the account once a minute (stops, liquidation distance, balance, ledger, withdrawals).
+  if (venue.live && info.name === "okx") {
+    const api = new OkxApi(config.okx.apiKey, config.okx.secretKey, config.okx.passphrase, config.okx.demo, 8000);
+    api.syncTime().catch(() => {}).finally(() => new AccountWatch(api, alerts, { instId: info.market, base: info.base, priceDecimals: info.priceDecimals }).start());
+  }
 
   trader.onShadow = (e) => { const a = shadowAlert(e, info.base, info.quoteCcy, info.priceDecimals); alerts.add("shadow", a.subject, a.body, "jev-trader 봇 (가상)"); };
   console.log(`jev-trader · ${info.label} · model=${model.name} · ${info.market} · ${venue.live ? "LIVE" : "DRY RUN"} · ${trader.describe()} · :${config.port}`);
