@@ -2,8 +2,9 @@
 """AI 1인 회사 — 로컬 서버.
 
 하는 일은 두 가지뿐입니다.
-  1) index.html 을 http://localhost:8787 로 보여 줍니다.
+  1) index.html 을 http://localhost:8989 로 보여 줍니다.
   2) POST /api/systemone 요청에 API 키를 붙여 TypeSafe Jev API 로 전달합니다.
+  3) GET /api/alerts 로 jev-trader 봇의 알림(GET /alerts)을 대신 가져옵니다. 봇 주소는 BOT_URL (기본 http://localhost:3000).
 
 API 키는 환경변수 TYPESAFE_API_KEY 또는 이 파일 옆의 .env 파일에서 읽습니다.
   실행:  TYPESAFE_API_KEY=발급받은키 python3 server.py
@@ -16,10 +17,23 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-PORT = int(os.environ.get("PORT", "8787"))
+PORT = int(os.environ.get("PORT", "8989"))
 API_URL = "https://api.typesafe.ai/v1/systemone"
 MAX_BODY = 256 * 1024
 ALLOWED_HOSTS = {f"localhost:{PORT}", f"127.0.0.1:{PORT}"}
+
+
+def load_env(name, default=""):
+    value = os.environ.get(name, "").strip()
+    if value:
+        return value
+    env_file = HERE / ".env"
+    if env_file.exists():
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line.startswith(name + "="):
+                return line.split("=", 1)[1].strip().strip("\"'")
+    return default
 
 
 def load_key():
@@ -66,6 +80,18 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, page.read_bytes(), "text/html; charset=utf-8")
         if path == "/api/status":
             return self._send(200, {"ok": True, "hasKey": bool(load_key())})
+        if path == "/api/alerts":
+            # 봇의 새 알림만: ?after=<마지막으로 본 id>
+            query = self.path.split("?", 1)[1] if "?" in self.path else ""
+            after = "".join(ch for ch in dict(p.split("=", 1) for p in query.split("&") if "=" in p).get("after", "0") if ch.isdigit()) or "0"
+            bot = load_env("BOT_URL", "http://localhost:3000").rstrip("/")
+            try:
+                with urllib.request.urlopen(f"{bot}/alerts?after={after}", timeout=5) as res:
+                    return self._send(res.status, res.read())
+            except urllib.error.HTTPError as e:
+                return self._send(e.code, e.read() or b"{}")
+            except (urllib.error.URLError, TimeoutError, OSError) as e:
+                return self._send(502, {"error": "bot_unreachable", "detail": str(e)})
         return self._send(404, {"error": "not_found"})
 
     def do_POST(self):

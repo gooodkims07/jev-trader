@@ -337,9 +337,22 @@ export class OkxVenue implements Venue {
   }
 
   /** Our emergency stops and exit OCOs left from an earlier run: stale (spike places new exits for a position it takes over). */
+  /** The exit OCO of an earlier run kept for the position open at start (see takeCarriedExits). */
+  private carriedExits: { tp: number; sl: number } | null = null;
+
   private async cancelLeftoverStops() {
-    const open = await this.api.signed<{ algoId: string; algoClOrdId: string }[]>("GET", "/api/v5/trade/orders-algo-pending", { ordType: "conditional,oco", instType: "SWAP", instId: this.instId }).catch(() => []);
-    const ours = open.filter((o) => o.algoClOrdId?.startsWith(STOP_PREFIX));
+    const open = await this.api.signed<{ algoId: string; algoClOrdId: string; ordType: string; tpTriggerPx: string; slTriggerPx: string }[]>("GET", "/api/v5/trade/orders-algo-pending", { ordType: "conditional,oco", instType: "SWAP", instId: this.instId }).catch(() => []);
+    let ours = open.filter((o) => o.algoClOrdId?.startsWith(STOP_PREFIX));
+    // A position is open (a restart): keep our exit OCO on the exchange and remember its levels, so the position is
+    // never unprotected and keeps exits that were moved by hand. The next setExits replaces it.
+    const pos = await this.api.signed<{ instId: string; pos: string }[]>("GET", "/api/v5/account/positions", { instId: this.instId }).catch(() => []);
+    const oco = ours.find((o) => o.ordType === "oco" && Number(o.tpTriggerPx) > 0 && Number(o.slTriggerPx) > 0);
+    if (oco && pos.some((p) => p.instId === this.instId && Number(p.pos) !== 0)) {
+      this.exitAlgo = oco.algoId;
+      this.carriedExits = { tp: Number(oco.tpTriggerPx), sl: Number(oco.slTriggerPx) };
+      ours = ours.filter((o) => o !== oco);
+      console.log(`okx: kept the exits left on the exchange: take-profit ${oco.tpTriggerPx} / stop ${oco.slTriggerPx}`);
+    }
     if (ours.length) {
       await this.api.signed("POST", "/api/v5/trade/cancel-algos", ours.map((o) => ({ algoId: o.algoId, instId: this.instId }))).catch(() => {});
       console.log(`okx: cancelled ${ours.length} emergency stop(s) left from an earlier run`);
@@ -430,6 +443,7 @@ export class OkxVenue implements Venue {
       marketOrder: (side, size, reduceOnly) => this.marketOrder(side, size, reduceOnly),
       positionNow: () => this.positionNow(),
       exitsState: () => this.exitsState(),
+      takeCarriedExits: () => { const x = this.carriedExits; this.carriedExits = null; return x; },
       fillsSince: (since, side) => this.fillsSince(since, side),
       setExits: (p) => this.setExits(p),
     };

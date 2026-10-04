@@ -738,6 +738,10 @@ export class SpikeTrader {
     // Adds counted as if it was built from orders of the current size: 40 at 10 a time is 1 + 3 adds.
     const adds = Math.max(0, Math.round(size / config.tradeSize) - 1);
     const n: Open = { lev: config.okx.leverage, who: "jev", side, entry, size, adds, openedAt: block, spikeBlock: -1, openedTs: Date.now() - 1000, entryFees: fee, manual: true, ...this.levels(side, entry, this.exitsFor(got.ordIds)) };
+    // Taken over at a restart: keep the exits the last run left on the exchange (they may have been moved by hand),
+    // if they still make sense for this position (take-profit beyond the entry side of the stop).
+    const carried = this.exec!.takeCarriedExits?.() ?? null;
+    if (carried && (dir > 0 ? carried.tp > carried.sl : carried.tp < carried.sl)) { n.tp = carried.tp; n.sl = carried.sl; n.tpSet = n.slSet = true; }
     this.open.set("jev", n);
     this.feesUsd += fee; this.realized -= fee;
     n.exitsOnExchange = await exec.setExits({ side, tp: n.tp, sl: n.sl });

@@ -387,6 +387,20 @@ test("manual part: no time limit; exits moved by hand survive adds", async () =>
   } finally { reset(); config.spike.maxHoldMin = saved; }
 });
 
+test("restart: a position taken over keeps the exits the last run left on the exchange", async () => {
+  try {
+    config.tradeSize = 5; config.okx.leverage = 5; config.risk.sessionStopLoss = 0;
+    const f = liveVenue();
+    let carried: { tp: number; sl: number } | null = { tp: 2.3, sl: 1.9 };
+    (f.v.exec as { takeCarriedExits?: () => unknown }).takeCarriedExits = () => { const x = carried; carried = null; return x; };
+    const t = new SpikeTrader(f.v, says("hold"), () => {});
+    f.ex.pos = 10; f.ex.avg = 2;
+    await settle(t, 21000);
+    expect(t.snapshot().open.find((o) => o.who === "jev")).toMatchObject({ tp: 2.3, sl: 1.9 });
+    expect(f.ex.exits.at(-1)).toEqual({ side: "buy", tp: 2.3, sl: 1.9 });
+  } finally { reset(); }
+});
+
 test("live and dry-run records are kept apart: each mode loads only its own", async () => {
   const f = liveVenue();
   const live = new SpikeTrader(f.v, says("hold"), () => {});

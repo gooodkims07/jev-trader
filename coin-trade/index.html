@@ -181,6 +181,8 @@ th{color:var(--mute);font-weight:600;font-size:11.5px;white-space:nowrap}
           <div class="actionsRow">
             <button class="pri" id="btnSend">✉️ 보내기</button>
             <button id="btnAuto">▶ 자동 실행</button>
+            <button id="btnBot" title="jev-trader 봇의 알림을 5초마다 가져와 자동으로 판단합니다">🔔 봇 알림 받기</button>
+            <span class="hint" id="botState"></span>
             <span class="sp">속도
               <button class="chip" data-speed="1">1배</button><button class="chip" data-speed="2">2배</button><button class="chip" data-speed="4">4배</button>
             </span>
@@ -888,6 +890,31 @@ $('#btnSend').onclick=()=>{
 };
 $('#btnAuto').onclick=()=>{if(auto)return stopAuto();auto=true;$('#btnAuto').classList.add('on');$('#btnAuto').textContent='⏸ 자동 실행 멈춤';autoTick()};
 $('#btnDemo').onclick=()=>setDemo(!ui.demo);
+
+/* ───────── 봇 알림 자동 받기: jev-trader 의 GET /alerts 를 server.py 가 대신 가져옵니다 ───────── */
+const BOT_KEY=COMPANY.slug+'.botAlerts';
+let botOn=load(BOT_KEY+'.on',false),botAfter=load(BOT_KEY+'.after',null),botTm=null;
+function setBot(on){
+  botOn=on;save(BOT_KEY+'.on',on);clearTimeout(botTm);
+  $('#btnBot').classList.toggle('on',on);$('#btnBot').textContent=on?'🔔 봇 알림 받는 중':'🔔 봇 알림 받기';
+  if(on)botPoll();else $('#botState').textContent='';
+}
+async function botPoll(){
+  if(!botOn)return;
+  try{
+    const r=await fetch('/api/alerts?after='+(botAfter??0));const j=await r.json();
+    if(!r.ok)throw new Error(j.error||r.status);
+    let n=0;
+    // 처음 켤 때는 지난 알림을 건너뛰고 지금부터 받습니다.
+    if(botAfter==null)botAfter=j.last;
+    else for(const a of j.alerts){enqueue({sender:a.sender,subject:a.subject,body:a.body});botAfter=a.id;n++}
+    save(BOT_KEY+'.after',botAfter);
+    $('#botState').textContent=n?`봇 알림 ${n}건 받음`:'봇 연결됨, 새 알림 기다리는 중';
+  }catch(e){$('#botState').textContent='봇에 연결할 수 없음 (jev-trader 가 켜져 있는지 확인)'}
+  botTm=setTimeout(botPoll,5000);
+}
+$('#btnBot').onclick=()=>setBot(!botOn);
+setBot(botOn);
 $('#status').onclick=async()=>{const k=await checkStatus();if(k)showError({kind:k});else toast(ui.demo?'체험 모드입니다. 실제 AI 결과가 아닙니다.':'Jev에 연결할 준비가 되어 있습니다.')};
 $('#modal').addEventListener('click',e=>{if(e.target.id==='modal')e.target.classList.remove('on')});
 $('#sModel').onchange=e=>{cfg.model=e.target.value;saveCfg()};

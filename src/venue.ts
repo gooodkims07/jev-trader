@@ -123,6 +123,11 @@ export interface MarketExec {
    */
   setExits(p: { side: Side; tp: number; sl: number } | null): Promise<boolean>;
   /**
+   * The exits an earlier run left on the exchange for the position open at start (its take-profit / stop OCO),
+   * once: a restart keeps them instead of going back to the settings'. Null when there were none.
+   */
+  takeCarriedExits?(): { tp: number; sl: number } | null;
+  /**
    * What became of the exits setExits placed: "live" still waiting, "tp" / "sl" the one that fired, "gone"
    * canceled (by hand, or by the exchange when the position closed another way), null when none are placed.
    */

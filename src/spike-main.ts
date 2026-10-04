@@ -4,8 +4,34 @@ import { startServer } from "./server";
 import { SpikeTrader, createSpikeModel } from "./spike";
 import { instrumentHandler, settingsHandler, tokenOk } from "./settings";
 import type { Venue } from "./venue";
+import { Alerts } from "./alerts";
+import type { BlockEvent } from "./trader";
+
+const REASON_KO: Record<string, string> = { "take-profit": "익절", "stop-loss": "손절", time: "시간 만료", manual: "수동 청산", reverse: "반대 전환", switch: "코인 변경", shutdown: "봇 종료", "session-stop": "세션 손절", "session-take": "세션 익절" };
+
+/** A bot note worth telling the office about, as an alert (subject in Korean, the note itself in the body); else null. */
+export function alertFor(note: string, e: BlockEvent, base: string, ccy: string, priceDecimals = 4): { kind: string; subject: string; body: string } | null {
+  const pos = e.position.side === "flat" ? "포지션 없음" : `${e.position.side === "long" ? "롱" : "숏"} ${e.position.size} ${base}`;
+  // Long prices in the note (an average entry) at the tick.
+  const tidy = note.replace(/\d+\.\d{6,}/g, (x) => Number(x).toFixed(priceDecimals));
+  const body = `${tidy}\n현재가 ${e.mid.toFixed(priceDecimals)}, ${pos}, 세션 손익 ${e.totals.pnlUsd} ${ccy}`;
+  if (note.startsWith("EXIT ")) {
+    const reason = note.split(" ")[1] ?? "";
+    return { kind: "exit", subject: `[spike] EXIT ${reason} (${REASON_KO[reason] ?? reason})`, body };
+  }
+  if (note.startsWith("session-stop") || note.startsWith("session-take")) {
+    const kind = note.startsWith("session-stop") ? "session-stop" : "session-take";
+    return { kind: "halt", subject: `[spike] ${kind}, 봇 정지`, body };
+  }
+  if (note.startsWith("MANUAL ")) return { kind: "manual", subject: note.includes("taken over") ? "[spike] 수동 포지션 인계" : "[spike] 수동 추가 매수 반영", body };
+  const m = note.match(/^SPIKE .*: (open|add|reverse)\b/);
+  if (m) return { kind: "entry", subject: `[spike] 진입: ${({ open: "새 포지션", add: "추가 매수", reverse: "반대 전환" } as Record<string, string>)[m[1]!]}`, body };
+  return null;
+}
 
 export async function runSpike(venue: Venue) {
+  // The coin-trade office reads these (GET /alerts?after=<id>).
+  const alerts = new Alerts();
   /** Hand trading needs a live venue that supports it, the method, and the admin token. */
   const guard = (req: Request, method: string): { status: number; body: unknown } | null => {
     if (req.method !== method) return { status: 405, body: { error: method } };
@@ -31,6 +57,11 @@ export async function runSpike(venue: Venue) {
         if (!tokenOk(req)) return { status: 401, body: { error: "wrong or missing admin token" } };
         return { status: 200, body: { reference: trader.resetReference() } };
       },
+      // GET ?after=<id>: alerts newer than that id, for the coin-trade office.
+      "/alerts": async (req) => {
+        const after = Number(new URL(req.url).searchParams.get("after") ?? 0) || 0;
+        return { status: 200, body: alerts.since(after) };
+      },
       // GET ?levels=N: the order book for the dashboard (display only).
       "/book": async (req) => {
         if (!venue.depth) return { status: 404, body: { error: "no order book here" } };
@@ -49,7 +80,11 @@ export async function runSpike(venue: Venue) {
         let b: Record<string, unknown>;
         try { b = (await req.json()) as Record<string, unknown>; } catch { return { status: 400, body: { error: "body must be JSON" } }; }
         const side = b.side, type = b.type, size = Number(b.size), price = b.price === undefined ? undefined : Number(b.price);
-        const refuse = (error: string) => { console.warn(`manual order refused (${JSON.stringify(b)}): ${error}`); return { status: 400, body: { error } }; };
+        const refuse = (error: string) => {
+          console.warn(`manual order refused (${JSON.stringify(b)}): ${error}`);
+          alerts.add("refused", "[spike] 수동 주문 거부", `대시보드 주문이 거부되었습니다(refused): ${b.side} ${b.type} ${b.size} ${venue.info.base}${b.price ? ` @ ${b.price}` : ""}${b.reduceOnly ? " 감소 전용" : ""}\n사유: ${error}`);
+          return { status: 400, body: { error } };
+        };
         const tpPct = b.tpPct === undefined ? null : Number(b.tpPct), slPct = b.slPct === undefined ? null : Number(b.slPct);
         if (side !== "buy" && side !== "sell") return refuse("side must be buy or sell");
         if (type !== "limit" && type !== "market") return refuse("type must be limit or market");
@@ -101,6 +136,7 @@ export async function runSpike(venue: Venue) {
           return { status: 200, body: { ...r, position: pos } };
         } catch (e) {
           console.warn(`manual close refused: ${(e as Error).message}`);
+          alerts.add("refused", "[spike] 시장가 청산 거부", `대시보드 ${fraction * 100}% 청산이 거부되었습니다(refused).\n사유: ${(e as Error).message}`);
           return { status: 400, body: { error: (e as Error).message } };
         }
       },
@@ -135,10 +171,15 @@ export async function runSpike(venue: Venue) {
   const trader = new SpikeTrader(venue, model, (e, note) => {
     server.broadcast(e);
     // Quiet unless something happened; a heartbeat every 5 minutes.
-    if (note) console.log(`#${e.block} ${px(e.mid)} ${note} · pnl ${e.totals.pnlUsd} ${info.quoteCcy}`);
+    if (note) {
+      console.log(`#${e.block} ${px(e.mid)} ${note} · pnl ${e.totals.pnlUsd} ${info.quoteCcy}`);
+      const a = alertFor(note, e, info.base, info.quoteCcy, info.priceDecimals);
+      if (a) alerts.add(a.kind, a.subject, a.body);
+    }
     else if (Date.now() - lastBeat > 300_000) { lastBeat = Date.now(); console.log(`#${e.block} ${px(e.mid)} waiting for a spike · position ${e.position.side} · pnl ${e.totals.pnlUsd} ${info.quoteCcy}`); }
   }, (block, fill) => server.broadcastFill(block, fill));
   console.log(`jev-trader · ${info.label} · model=${model.name} · ${info.market} · ${venue.live ? "LIVE" : "DRY RUN"} · ${trader.describe()} · :${config.port}`);
+  alerts.add("start", "[spike] 봇 시작", `봇이 ${venue.live ? "실거래" : "모의"}로 시작했습니다. ${info.market}, ${trader.describe()}`);
 
   // Leaving never strands a live position: close Jev's at market, cancel our orders and exits, then exit.
   // Exit 0 (not 75), so scripts/run.sh stops too. A session stop or take-profit ends the run the same way.
