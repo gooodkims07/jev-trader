@@ -35,6 +35,7 @@ export const LEVERAGE_OPTIONS = [1, 2, 3, 5, 10, 15, 20];
 export const TICK_OPTIONS = [1000, 3000, 5000, 10_000, 15_000, 30_000, 60_000];
 
 const DEFS: Def[] = [
+  { key: "briefHour", group: "clock", min: -1, max: 23, step: 1, unit: "hour", get: () => config.briefHour, set: (v) => { config.briefHour = v; }, strategies: ["spike"], options: Array.from({ length: 25 }, (_, i) => i - 1), venues: ["okx"] },
   { key: "okx.tickMs", group: "clock", min: 1000, max: 60_000, step: 1000, unit: "ms", get: () => config.okx.tickMs, set: (v) => { config.okx.tickMs = v; }, strategies: ["mm", "spike"], options: TICK_OPTIONS, venues: ["okx"] },
   { key: "spike.window1Sec", group: "spike", min: 30, max: 900, step: 30, unit: "s", get: () => config.spike.window1Sec, set: (v) => { config.spike.window1Sec = v; }, strategies: ["spike"], options: WINDOW_OPTIONS },
   { key: "spike.move1mPct", group: "spike", min: 0.05, max: 10, step: 0.05, unit: "%", get: () => config.spike.move1mPct, set: (v) => { config.spike.move1mPct = v; }, strategies: ["spike"] },

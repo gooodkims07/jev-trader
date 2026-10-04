@@ -5,6 +5,8 @@ import { SpikeTrader, createSpikeModel, type ShadowEvent } from "./spike";
 import { instrumentHandler, settingsHandler, tokenOk } from "./settings";
 import type { Venue } from "./venue";
 import { Alerts } from "./alerts";
+import { buildBrief } from "./brief";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import type { BlockEvent } from "./trader";
 
 const REASON_KO: Record<string, string> = { "take-profit": "익절", "stop-loss": "손절", time: "시간 만료", manual: "수동 청산", reverse: "반대 전환", switch: "코인 변경", shutdown: "봇 종료", "session-stop": "세션 손절", "session-take": "세션 익절" };
@@ -69,6 +71,13 @@ export async function runSpike(venue: Venue) {
         if (!config.adminToken) return { status: 403, body: { error: "read-only: start the server with ADMIN_TOKEN" } };
         if (!tokenOk(req)) return { status: 401, body: { error: "wrong or missing admin token" } };
         return { status: 200, body: { reference: trader.resetReference() } };
+      },
+      // POST with the admin token: send the market brief to the office now (it also goes daily at BRIEF_HOUR).
+      "/alerts/brief": async (req) => {
+        if (req.method !== "POST") return { status: 405, body: { error: "POST" } };
+        if (!config.adminToken) return { status: 403, body: { error: "read-only: start the server with ADMIN_TOKEN" } };
+        if (!tokenOk(req)) return { status: 401, body: { error: "wrong or missing admin token" } };
+        try { return { status: 200, body: await sendBrief() }; } catch (e) { return { status: 502, body: { error: (e as Error).message } }; }
       },
       // GET ?after=<id>: alerts newer than that id, for the coin-trade office.
       "/alerts": async (req) => {
@@ -197,6 +206,23 @@ export async function runSpike(venue: Venue) {
     }
     else if (Date.now() - lastBeat > 300_000) { lastBeat = Date.now(); console.log(`#${e.block} ${px(e.mid)} waiting for a spike · position ${e.position.side} · pnl ${e.totals.pnlUsd} ${info.quoteCcy}`); }
   }, (block, fill) => server.broadcastFill(block, fill));
+  // The daily market brief: once a day at BRIEF_HOUR (local time); the day it went out is kept across restarts.
+  const BRIEF_STATE = "data/brief.json";
+  const today = () => new Date().toLocaleDateString("sv-SE"); // YYYY-MM-DD, local
+  const sendBrief = async () => {
+    const b = await buildBrief(info.market, info.priceDecimals);
+    const a = alerts.add("brief", b.subject, b.body, "시황 리포트");
+    try { writeFileSync(BRIEF_STATE, JSON.stringify({ last: today() })); } catch { /* sent anyway */ }
+    console.log(`market brief sent: ${b.subject}`);
+    return a;
+  };
+  setInterval(() => {
+    if (config.briefHour < 0 || new Date().getHours() !== config.briefHour) return;
+    let last = "";
+    try { if (existsSync(BRIEF_STATE)) last = (JSON.parse(readFileSync(BRIEF_STATE, "utf8")) as { last?: string }).last ?? ""; } catch { /* none yet */ }
+    if (last !== today()) sendBrief().catch((e) => console.warn(`market brief: ${(e as Error).message}`));
+  }, 60_000);
+
   trader.onShadow = (e) => { const a = shadowAlert(e, info.base, info.quoteCcy, info.priceDecimals); alerts.add("shadow", a.subject, a.body, "jev-trader 봇 (가상)"); };
   console.log(`jev-trader · ${info.label} · model=${model.name} · ${info.market} · ${venue.live ? "LIVE" : "DRY RUN"} · ${trader.describe()} · :${config.port}`);
   alerts.add("start", "[spike] 봇 시작", `봇이 ${venue.live ? "실거래" : "모의"}로 시작했습니다. ${info.market}, ${trader.describe()}`);

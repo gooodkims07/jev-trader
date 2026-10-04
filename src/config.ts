@@ -131,6 +131,8 @@ export const config = {
    *            go on trading.
    * Closing posts reduce-only post-only orders at the touch each block until flat ("slowly": no market orders).
    */
+  /** The daily market brief to the coin-trade office (src/brief.ts): the hour it is sent (local time, 0 to 23), -1 = off. */
+  briefHour: Number(env("BRIEF_HOUR", "8")),
   risk: {
     sessionStopLoss: Number(env("RISK_SESSION_STOP_LOSS", "0")),
     sessionTakeProfit: Number(env("RISK_SESSION_TAKE_PROFIT", "0")),
