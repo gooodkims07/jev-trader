@@ -10,6 +10,8 @@ export const WHO: { who: Who; name: Key; colour: string }[] = [
   { who: "fade", name: "spike.who.fade", colour: "var(--buy)" },
   { who: "follow", name: "spike.who.follow", colour: "var(--late)" },
   { who: "trend", name: "spike.who.trend", colour: "var(--trend)" },
+  { who: "band", name: "spike.who.band", colour: "var(--band)" },
+  { who: "squeeze", name: "spike.who.squeeze", colour: "var(--squeeze)" },
 ];
 
 /** Trades taken over from the OKX app or closed by hand: shown apart, so Jev's row is Jev's own. */
@@ -47,7 +49,10 @@ export default function SpikeCompare({ snap }: { snap: SpikeSnapshot | null }) {
           <tr><th>{t("spike.col.strategy")}</th><th>{t("spike.col.trades")}</th><th>{t("spike.col.win")}</th><th>{t("spike.col.avg")}</th><th>{t("spike.col.exits")}</th><th>{t("spike.col.usdt")}</th></tr>
         </thead>
         <tbody>
-          {WHO.map(({ who, name, colour }) => (who === "trend" && !snap?.stats.trend ? null : row(who, t(name), colour, snap?.stats[who as "jev"] ?? snap?.stats.trend)))}
+          {WHO.map(({ who, name, colour }) => {
+            const st = (snap?.stats as Record<string, SpikeStat | undefined> | undefined)?.[who];
+            return st || who === "jev" || who === "fade" || who === "follow" ? row(who, t(name), colour, st) : null;
+          })}
           {manual && manual.trades ? row("manual", t("spike.who.manual"), MANUAL_COLOUR, manual) : null}
         </tbody>
       </table>
@@ -59,6 +64,26 @@ export default function SpikeCompare({ snap }: { snap: SpikeSnapshot | null }) {
             if (o) return t("spike.trendIn", { side: t(o.side === "buy" ? "chart.long" : "chart.short"), entry: venue.fmtMid(o.entry), stop: tr.stop !== null ? venue.fmtMid(tr.stop) : "-" });
             if (tr.high === null || tr.low === null) return t("spike.trendWarming", { n: tr.minutes, need: Math.round(tr.lookbackSec / 60) });
             return t("spike.trendWaiting", { hi: venue.fmtMid(tr.high), lo: venue.fmtMid(tr.low) });
+          })()}
+        </div>
+      ) : null}
+      {snap?.band ? (
+        <div className={styles.note}>
+          {(() => {
+            const b = snap.band!, o = snap.open.find((x) => x.who === "band");
+            if (o) return t("spike.bandIn", { side: t(o.side === "buy" ? "chart.long" : "chart.short"), entry: venue.fmtMid(o.entry), tp: venue.fmtMid(o.tp), sl: venue.fmtMid(o.sl) });
+            if (b.lower === null || b.upper === null || b.mid === null) return t("spike.bandWarming");
+            return t(b.resting ? "spike.bandResting" : "spike.bandWaiting", { lo: venue.fmtMid(b.lower), mid: venue.fmtMid(b.mid), hi: venue.fmtMid(b.upper) });
+          })()}
+        </div>
+      ) : null}
+      {snap?.squeeze ? (
+        <div className={styles.note}>
+          {(() => {
+            const q = snap.squeeze!, o = snap.open.find((x) => x.who === "squeeze");
+            if (o) return t("spike.squeezeIn", { side: t(o.side === "buy" ? "chart.long" : "chart.short"), entry: venue.fmtMid(o.entry), sl: venue.fmtMid(o.sl) });
+            if (q.armed) return t("spike.squeezeArmed", { hi: venue.fmtMid(q.armed.high), lo: venue.fmtMid(q.armed.low) });
+            return t("spike.squeezeWaiting", { w: q.widthPct === null ? "-" : q.widthPct.toFixed(2) });
           })()}
         </div>
       ) : null}

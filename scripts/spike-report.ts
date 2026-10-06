@@ -41,6 +41,8 @@ line("manual", manual);
 line("rule: fade", trades.filter((t) => t.who === "fade"));
 line("rule: follow", trades.filter((t) => t.who === "follow"));
 line("rule: trend", trades.filter((t) => t.who === "trend"));
+line("rule: band", trades.filter((t) => t.who === "band"));
+line("rule: squeeze", trades.filter((t) => t.who === "squeeze"));
 
 // On the spikes Jev stayed out of, what would the rules have made? (Were the skips good skips?)
 const skipped = new Set(asked.filter((s) => s.jev?.action === "hold").map((s) => s.block));
@@ -51,7 +53,7 @@ line("follow, Jev out", trades.filter((t) => t.who === "follow" && skipped.has(t
 // reached each move, to set the take-profit and stop from. Rows from before this was recorded are skipped.
 const LEVELS = [0.5, 1, 1.5, 2, 3, 4];
 console.log("how far trades went before the close (price move reached: in favour / against):");
-for (const who of ["jev", "fade", "follow", "trend"]) {
+for (const who of ["jev", "fade", "follow", "trend", "band", "squeeze"]) {
   const m = trades.filter((t) => t.who === who && t.mfePct !== undefined);
   if (!m.length) { console.log(`  ${who.padEnd(8)} not measured yet`); continue; }
   const avg = (k: string) => (m.reduce((a, t) => a + t[k], 0) / m.length).toFixed(2);

@@ -33,7 +33,7 @@
       },
       {
         "title": "가상 거래는 질문 없이 리서치팀이 기록합니다.",
-        "text": "되돌림, 추종, 추세는 실제 주문 없이 성적만 비교하는 가상 전략입니다. 돈이 움직이지 않으니 판단할 것은 없고, 전략을 실거래로 바꿀지 정할 때 쓸 성적만 모읍니다."
+        "text": "되돌림, 추종, 추세, 밴드, 스퀴즈는 실제 주문 없이 성적만 비교하는 가상 전략입니다. 돈이 움직이지 않으니 판단할 것은 없고, 전략을 실거래로 바꿀지 정할 때 쓸 성적만 모읍니다."
       },
       {
         "title": "시장 뉴스와 매일 시황 요약은 리서치팀이 대표에게 보고합니다.",
@@ -153,7 +153,7 @@
             "key": "virtual",
             "label": "가상 거래",
             "next": "a:shadow_log",
-            "criteria": "A report about a simulated (paper, shadow) trade of a comparison strategy (fade, follow, trend): the subject is tagged as virtual and the body says no real order was sent, so no real money moved. Not the company's real trades.",
+            "criteria": "A report about a simulated (paper, shadow) trade of a comparison strategy (fade, follow, trend, band, squeeze): the subject is tagged as virtual and the body says no real order was sent, so no real money moved. Not the company's real trades.",
             "kw": [
               "가상",
               "shadow",

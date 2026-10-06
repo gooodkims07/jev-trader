@@ -87,7 +87,7 @@ test("snapshot: plan, gauge, open positions, Jev vs rules, and the spike list fo
   expect(s.gauge.cooldownSec).toBeGreaterThan(0);
   expect(s.open.map((o) => `${o.who}:${o.side}`).sort()).toEqual(["fade:buy", "follow:sell", "jev:buy"]);
   expect(s.spikes[0]).toMatchObject({ block: b - 1, direction: "down", jevOpen: true, trade: null });
-  expect(Object.keys(s.stats).sort()).toEqual(["fade", "follow", "jev", "manual", "trend"]);
+  expect(Object.keys(s.stats).sort()).toEqual(["band", "fade", "follow", "jev", "manual", "squeeze", "trend"]);
   expect(s.open.find((o) => o.who === "jev")).toMatchObject({ mfePct: null, maePct: null, manual: false }); // opened this tick: no move measured yet
   expect(Array.isArray(s.curve)).toBe(true);
 });
@@ -314,4 +314,47 @@ test("trend shadow: long on a break of the lookback high, out on the trailing st
   } finally {
     config.spike.trendLookbackSec = saved.lb; config.spike.trendTrailPct = saved.tr;
   }
+});
+
+/** 1-minute closes ending just before `block`, each 15-minute bar closing at `bar15(i)`. */
+function seed15(t: SpikeTrader, block: number, bars: number[]) {
+  const end = Math.floor(block / 60), n = bars.length * 15;
+  (t as unknown as { closes: { m: number; c: number }[] }).closes = Array.from({ length: n }, (_, i) => ({ m: end - n + i, c: bars[Math.floor(i / 15)]! }));
+}
+
+test("band shadow: long at the lower band, out at the middle; resting while the bands widen fast", async () => {
+  const v = venue();
+  const t = new SpikeTrader(v, says("hold"), () => {});
+  let b = 9_000_000; // a round 15 minutes
+  seed15(t, b, Array.from({ length: 40 }, (_, i) => 1.5 + (i % 2 ? 0.003 : -0.003))); // a calm range around 1.5
+  const s0 = t.snapshot().band;
+  expect(s0.lower).toBeLessThan(1.5); expect(s0.resting).toBe(false);
+  v.setMid(s0.lower! - 0.001); await t.onBlock(b++);
+  const o = () => t.snapshot().open.find((x) => x.who === "band");
+  expect(o()).toMatchObject({ side: "buy" });
+  v.setMid(1.5); await t.onBlock(b++); // back to the middle: take-profit
+  expect(o()).toBeUndefined();
+  const rows = readFileSync("data/spike.jsonl", "utf8").trim().split("\n").map((l) => JSON.parse(l)).filter((r) => r.type === "trade" && r.who === "band");
+  expect(rows.at(-1)).toMatchObject({ side: "buy", reason: "take-profit" });
+
+  // Bands blowing out (the last bars swing far wider): no entry.
+  const t2 = new SpikeTrader(v, says("hold"), () => {});
+  seed15(t2, b, [...Array.from({ length: 35 }, (_, i) => 1.5 + (i % 2 ? 0.001 : -0.001)), 1.53, 1.47, 1.54, 1.46, 1.55]);
+  expect(t2.snapshot().band.resting).toBe(true);
+  v.setMid(1.40); await t2.onBlock(b + 100);
+  expect(t2.snapshot().open.find((x) => x.who === "band")).toBeUndefined();
+});
+
+test("squeeze shadow: armed when the bands are at their narrowest, long on the break of the last 2 hours' range", async () => {
+  const v = venue();
+  const t = new SpikeTrader(v, says("hold"), () => {});
+  const b = 9_900_000;
+  // Wide swings, then a tight coil: the bands end at their narrowest of the last 50 bars.
+  seed15(t, b, [...Array.from({ length: 40 }, (_, i) => 1.5 + (i % 2 ? 0.02 : -0.02)), ...Array.from({ length: 30 }, (_, i) => 1.5 + (i % 2 ? 0.0005 : -0.0005))]);
+  v.setMid(1.5); await t.onBlock(b);
+  const arm = t.snapshot().squeeze.armed;
+  expect(arm).not.toBeNull();
+  v.setMid(arm!.high + 0.002); await t.onBlock(b + 1);
+  expect(t.snapshot().open.find((x) => x.who === "squeeze")).toMatchObject({ side: "buy" });
+  expect(t.snapshot().squeeze.armed).toBeNull();
 });

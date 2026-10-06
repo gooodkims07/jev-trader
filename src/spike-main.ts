@@ -14,7 +14,7 @@ import type { BlockEvent } from "./trader";
 const REASON_KO: Record<string, string> = { "take-profit": "익절", "stop-loss": "손절", time: "시간 만료", manual: "수동 청산", reverse: "반대 전환", switch: "코인 변경", shutdown: "봇 종료", "session-stop": "세션 손절", "session-take": "세션 익절" };
 
 /** A bot note worth telling the office about, as an alert (subject in Korean, the note itself in the body); else null. */
-const SHADOW_KO: Record<ShadowEvent["who"], string> = { fade: "되돌림", follow: "추종", trend: "추세" };
+const SHADOW_KO: Record<ShadowEvent["who"], string> = { fade: "되돌림", follow: "추종", trend: "추세", band: "밴드", squeeze: "스퀴즈" };
 
 /** A shadow strategy's trade as an alert, marked virtual (가상) in the subject and body: no money moved. */
 export function shadowAlert(e: ShadowEvent, base: string, ccy: string, priceDecimals = 4): { subject: string; body: string } {

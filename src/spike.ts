@@ -135,7 +135,7 @@ export class MockSpikeModel implements SpikeModel {
 
 export const createSpikeModel = (v: VenueInfo): SpikeModel => (config.model === "jev" ? new JevSpikeModel(v) : new MockSpikeModel());
 
-type Who = "jev" | "fade" | "follow" | "trend";
+type Who = "jev" | "fade" | "follow" | "trend" | "band" | "squeeze";
 /**
  * entry is the average over the first order and any adds; tp and sl follow it. Live (Jev only): openedTs is
  * when the first order filled, and exitsOnExchange says whether OKX holds the take-profit / stop OCO (else the
@@ -190,9 +190,13 @@ export interface SpikeSnapshot {
   /** Newest first; `trade` is Jev's closed trade from that spike, if any. */
   spikes: (SpikeRow & { trade: Pick<TradeRow, "side" | "reason" | "pnlPct" | "roePct" | "pnlUsd"> | null; jevOpen: boolean })[];
   /** Cumulative USDT per strategy after each closed trade, oldest first. */
-  curve: { ts: number; jev: number; fade: number; follow: number; trend: number; manual: number }[];
+  curve: { ts: number; jev: number; fade: number; follow: number; trend: number; band: number; squeeze: number; manual: number }[];
   /** The trend shadow: its channel (null until enough history) and settings. Its position is in `open`. */
   trend: { lookbackSec: number; trailPct: number; high: number | null; low: number | null; minutes: number; stop: number | null };
+  /** The band shadow: Bollinger bands on 15-minute closes (null until 21 bars), and whether it is resting (bands widening). */
+  band: { upper: number | null; mid: number | null; lower: number | null; resting: boolean };
+  /** The squeeze shadow: the range it waits to see broken while armed (null when not armed). */
+  squeeze: { armed: { high: number; low: number; until: number } | null; widthPct: number | null };
 }
 
 export class SpikeTrader {
@@ -207,7 +211,7 @@ export class SpikeTrader {
   private open = new Map<Who, Open>();
   private realized = 0; // Jev's closed trades, quote currency, fees included
   private feesUsd = 0;
-  private closed = { jev: 0, fade: 0, follow: 0, trend: 0 };
+  private closed = { jev: 0, fade: 0, follow: 0, trend: 0, band: 0, squeeze: 0 };
   /** Everything in data/spike.jsonl, this run and earlier ones, for the dashboard. */
   private spikeRows: SpikeRow[] = [];
   private tradeRows: TradeRow[] = [];
@@ -259,7 +263,7 @@ export class SpikeTrader {
       return { trades: ts.length, wins: ts.filter((x) => x.pnlPct > 0).length, avgPct: ts.length ? round(ts.reduce((a, x) => a + x.pnlPct, 0) / ts.length, 4) : 0, totalUsd: round(ts.reduce((a, x) => a + x.pnlUsd, 0), 5), tp: by("take-profit") + trail(true), sl: by("stop-loss") + trail(false), time: by("time") };
     };
     const rowsOf = (who: Who) => this.tradeRows.filter((x) => x.who === who && !isManual(x));
-    const stats = { jev: stat(rowsOf("jev")), fade: stat(rowsOf("fade")), follow: stat(rowsOf("follow")), trend: stat(rowsOf("trend")), manual: stat(this.tradeRows.filter(isManual)) };
+    const stats = { jev: stat(rowsOf("jev")), fade: stat(rowsOf("fade")), follow: stat(rowsOf("follow")), trend: stat(rowsOf("trend")), band: stat(rowsOf("band")), squeeze: stat(rowsOf("squeeze")), manual: stat(this.tradeRows.filter(isManual)) };
     // The plan's own exits join the levels, so the table says how often they would have been reached.
     const levels = [...new Set([...REACH_LEVELS, round(this.tpPct, 2), round(this.slPct, 2)])].sort((a, b) => a - b);
     const excursion = (ts: TradeRow[]): Excursion => {
@@ -270,13 +274,13 @@ export class SpikeTrader {
         reach: levels.map((pct) => ({ pct, fav: m.filter((x) => x.mfePct! >= pct).length, adv: m.filter((x) => x.maePct! <= -pct).length })),
       };
     };
-    const excursions = { jev: excursion(rowsOf("jev")), fade: excursion(rowsOf("fade")), follow: excursion(rowsOf("follow")), trend: excursion(rowsOf("trend")) };
+    const excursions = { jev: excursion(rowsOf("jev")), fade: excursion(rowsOf("fade")), follow: excursion(rowsOf("follow")), trend: excursion(rowsOf("trend")), band: excursion(rowsOf("band")), squeeze: excursion(rowsOf("squeeze")) };
     const jevBySpike = new Map(this.tradeRows.filter((x) => x.who === "jev").map((x) => [x.spikeBlock, x]));
     const jevOpen = this.open.get("jev");
-    const cum = { jev: 0, fade: 0, follow: 0, trend: 0, manual: 0 };
+    const cum = { jev: 0, fade: 0, follow: 0, trend: 0, band: 0, squeeze: 0, manual: 0 };
     const curve = [...this.tradeRows].sort((a, b) => a.closedAt - b.closedAt).map((x) => {
       cum[isManual(x) ? "manual" : x.who] += x.pnlUsd;
-      return { ts: x.ts ?? x.closedAt * 1000, jev: round(cum.jev, 5), fade: round(cum.fade, 5), follow: round(cum.follow, 5), trend: round(cum.trend, 5), manual: round(cum.manual, 5) };
+      return { ts: x.ts ?? x.closedAt * 1000, jev: round(cum.jev, 5), fade: round(cum.fade, 5), follow: round(cum.follow, 5), trend: round(cum.trend, 5), band: round(cum.band, 5), squeeze: round(cum.squeeze, 5), manual: round(cum.manual, 5) };
     });
     return {
       plan: { live: this.venue.live, observe: this.venue.live && !!config.spike.observe, sides: config.spike.sides === 1 ? "long" : config.spike.sides === 2 ? "short" : "both", maxAdds: config.spike.maxAdds, allowReverse: !!config.spike.allowReverse, move1mPct: config.spike.move1mPct, move3mPct: config.spike.move3mPct, window1Sec: config.spike.window1Sec, window2Sec: config.spike.window2Sec, takeProfitRoePct: config.spike.takeProfitRoePct, stopLossRoePct: config.spike.stopLossRoePct, takeProfitPct: this.tpPct, stopLossPct: this.slPct, leverage: config.okx.leverage, maxHoldMin: config.spike.maxHoldMin, size: config.tradeSize, base: this.venue.info.base },
@@ -289,6 +293,8 @@ export class SpikeTrader {
       }),
       stats,
       excursions,
+      band: (() => { const b = this.bands(); return { upper: b?.upper ?? null, mid: b?.mid ?? null, lower: b?.lower ?? null, resting: !!b?.wide }; })(),
+      squeeze: { armed: this.squeezeArm, widthPct: this.bands()?.widthPct ?? null },
       trend: (() => {
         const ch = this.channel(), o = this.open.get("trend");
         return { lookbackSec: config.spike.trendLookbackSec, trailPct: config.spike.trendTrailPct, high: ch?.high ?? null, low: ch?.low ?? null, minutes: this.closes.length, stop: o ? this.trailStop(o) : null };
@@ -303,7 +309,7 @@ export class SpikeTrader {
 
   describe() {
     const s = config.spike;
-    return `spike · trigger ${s.move1mPct}% in ${spanLabel(s.window1Sec)} or ${s.move3mPct}% in ${spanLabel(s.window2Sec)} · exits ROE +${s.takeProfitRoePct}% / -${s.stopLossRoePct}% at ${config.okx.leverage}x = price +${this.tpPct}% / -${this.slPct}% · max ${s.maxHoldMin} min · shadows: fade, follow, trend (${spanLabel(s.trendLookbackSec)} breakout, ${s.trendTrailPct}% trail) · log data/spike.jsonl`;
+    return `spike · trigger ${s.move1mPct}% in ${spanLabel(s.window1Sec)} or ${s.move3mPct}% in ${spanLabel(s.window2Sec)} · exits ROE +${s.takeProfitRoePct}% / -${s.stopLossRoePct}% at ${config.okx.leverage}x = price +${this.tpPct}% / -${this.slPct}% · max ${s.maxHoldMin} min · shadows: fade, follow, trend (${spanLabel(s.trendLookbackSec)} breakout, ${s.trendTrailPct}% trail), band (15m Bollinger 20, 2 sigma), squeeze (15m) · log data/spike.jsonl`;
   }
 
   async onBlock(block: number) {
@@ -344,7 +350,7 @@ export class SpikeTrader {
           if (res) { ({ quote, fill } = res); note = `EXIT ${res.reason} ${res.pnlPct >= 0 ? "+" : ""}${res.pnlPct.toFixed(3)}% (ROE ${(res.pnlPct * config.okx.leverage).toFixed(1)}%, ${res.pnlUsd >= 0 ? "+" : ""}${res.pnlUsd.toFixed(4)} ${this.venue.info.quoteCcy})`; }
           continue;
         }
-        if (o.who === "trend") continue; // its own exits, in trendStep
+        if (o.who === "trend" || o.who === "band" || o.who === "squeeze") continue; // their own exits, in their steps
         const r = this.exitReason(o, book, block);
         if (!r) continue;
         const res = this.close(o, book, block, r);
@@ -352,6 +358,8 @@ export class SpikeTrader {
       }
 
       this.trendStep(book, block);
+      this.bandStep(book, block);
+      this.squeezeStep(book, block);
 
       // Live: the session stop and take-profit (RISK_SESSION_*) close Jev's own position and end the run. A manual
       // position stays open with its exits on the exchange.
@@ -461,6 +469,89 @@ export class SpikeTrader {
     const n = this.open.get("trend")!;
     n.peak = mid;
     console.log(`trend shadow: ${side === "buy" ? "long" : "short"} at ${n.entry} (broke the ${spanLabel(config.spike.trendLookbackSec)} ${side === "buy" ? "high" : "low"} ${side === "buy" ? ch.high : ch.low})`);
+  }
+
+  // ---- the band and squeeze shadows (simulated): Bollinger bands on 15-minute closes ----
+
+  /** 15-minute closes from the 1-minute ones (the last minute's close in each), the forming bar last. */
+  private bars15(): number[] {
+    const out: { k: number; c: number }[] = [];
+    for (const x of this.closes) { const k = Math.floor(x.m / 15), last = out[out.length - 1]; if (last && last.k === k) last.c = x.c; else out.push({ k, c: x.c }); }
+    return out.map((x) => x.c);
+  }
+
+  /**
+   * Bollinger bands (20 completed 15-minute bars, 2 sigma), the width in % of the middle, and whether the bands
+   * are widening fast (now over 1.5 x their average width of the last 20 bars): a range breaking, the band shadow rests.
+   * `history`: the widths of the last 50 completed bars, for the squeeze. Null without 21 bars.
+   */
+  private bands(): { upper: number; mid: number; lower: number; sigma: number; widthPct: number; wide: boolean; history: number[] } | null {
+    const c = this.bars15().slice(0, -1); // completed bars only
+    if (c.length < 21) return null;
+    const at = (end: number) => {
+      const w = c.slice(end - 20, end), mid = w.reduce((a, x) => a + x, 0) / 20;
+      const sigma = Math.sqrt(w.reduce((a, x) => a + (x - mid) ** 2, 0) / 20);
+      return { mid, sigma, widthPct: ((4 * sigma) / mid) * 100 };
+    };
+    const now = at(c.length), history: number[] = [];
+    for (let end = Math.max(20, c.length - 50); end <= c.length; end++) history.push(at(end).widthPct);
+    const recent = history.slice(-21, -1), avg = recent.reduce((a, x) => a + x, 0) / (recent.length || 1);
+    return { upper: now.mid + 2 * now.sigma, mid: now.mid, lower: now.mid - 2 * now.sigma, sigma: now.sigma, widthPct: now.widthPct, wide: recent.length >= 5 && now.widthPct > 1.5 * avg, history };
+  }
+
+  /** Band shadow: long at the lower band, short at the upper; out at the middle (take-profit), 1 sigma beyond the band (stop), or after 12 h. */
+  private bandStep(book: Book, block: number) {
+    const b = this.bands(), mid = book.mid, o = this.open.get("band");
+    if (o) {
+      const long = o.side === "buy";
+      if (b) o.tp = b.mid; // the target follows the middle band
+      const reason = (long ? mid >= o.tp : mid <= o.tp) ? "take-profit" : (long ? mid <= o.sl : mid >= o.sl) ? "stop-loss" : block - o.openedAt >= 12 * 3600 ? "time" : null;
+      if (reason) this.close(o, book, block, reason);
+      return;
+    }
+    if (!b || b.wide || block < this.bandCooldownUntil) return;
+    const side: Side | null = mid <= b.lower ? "buy" : mid >= b.upper ? "sell" : null;
+    if (!side) return;
+    this.openPos("band", side, book, block);
+    const n = this.open.get("band")!;
+    n.tp = b.mid;
+    n.sl = side === "buy" ? b.lower - b.sigma : b.upper + b.sigma;
+    this.bandCooldownUntil = block + 15 * 60; // one entry per bar at most
+    console.log(`band shadow: ${side === "buy" ? "long" : "short"} at ${n.entry} (bands ${b.lower.toFixed(4)} / ${b.mid.toFixed(4)} / ${b.upper.toFixed(4)})`);
+  }
+  private bandCooldownUntil = 0;
+
+  /** Squeeze shadow: armed when the bands are their narrowest of the last 50 bars, on the last 2 h range; long or short on its break. */
+  private squeezeArm: { high: number; low: number; until: number } | null = null;
+  private squeezeStep(book: Book, block: number) {
+    const mid = book.mid, o = this.open.get("squeeze");
+    if (o) {
+      o.peak = o.side === "buy" ? Math.max(o.peak ?? o.entry, mid) : Math.min(o.peak ?? o.entry, mid);
+      const trail = o.side === "buy" ? (o.peak ?? o.entry) - (o.entry - o.sl) : (o.peak ?? o.entry) + (o.sl - o.entry); // the range's height, trailing
+      const stop = o.side === "buy" ? Math.max(o.sl, trail) : Math.min(o.sl, trail);
+      const hit = o.side === "buy" ? mid <= stop : mid >= stop;
+      if (hit) this.close(o, book, block, stop === o.sl ? "stop-loss" : "trail");
+      else if (block - o.openedAt >= 24 * 3600) this.close(o, book, block, "time");
+      return;
+    }
+    const b = this.bands();
+    if (b && b.history.length >= 30 && b.widthPct <= Math.min(...b.history)) {
+      const last8 = this.bars15().slice(-9, -1); // the last 2 h of completed bars
+      this.squeezeArm = { high: Math.max(...last8), low: Math.min(...last8), until: block + 4 * 3600 };
+    }
+    const arm = this.squeezeArm;
+    if (!arm) return;
+    if (block > arm.until) { this.squeezeArm = null; return; }
+    const side: Side | null = mid > arm.high ? "buy" : mid < arm.low ? "sell" : null;
+    if (!side) return;
+    this.openPos("squeeze", side, book, block);
+    const n = this.open.get("squeeze")!;
+    const height = Math.max(arm.high - arm.low, n.entry * 0.004); // at least 0.4%
+    n.sl = side === "buy" ? n.entry - height : n.entry + height;
+    n.tp = side === "buy" ? n.entry + 2 * height : n.entry - 2 * height; // shown only; the stop trails
+    n.peak = mid;
+    this.squeezeArm = null;
+    console.log(`squeeze shadow: ${side === "buy" ? "long" : "short"} at ${n.entry} (broke ${side === "buy" ? arm.high : arm.low} after a squeeze)`);
   }
 
   /** The mid `sec` seconds before the newest sample (the last one at or before then), or null without that much history. */
