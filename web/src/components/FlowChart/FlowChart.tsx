@@ -476,9 +476,9 @@ export default function FlowChart({
       // A candle: its time, then close, high / low, open.
       const b = model.bars.find((x) => x.t === hover);
       if (!b) return null;
-      const flip = b.x + model.shift > w - 168, f = (n: number) => n.toFixed(venue.priceDecimals);
+      const tw = 176, flip = b.x + model.shift > w - tw - 30, f = (n: number) => n.toFixed(venue.priceDecimals);
       return {
-        x: b.x, y: b.yC, tx: flip ? b.x - 146 : b.x + 14, ty: Math.min(Math.max(b.yC - 92, PAD_TOP - 46), model.base - 82),
+        tw, x: b.x, y: b.yC, tx: flip ? b.x - tw - 14 : b.x + 14, ty: Math.min(Math.max(b.yC - 92, PAD_TOP - 46), model.base - 82),
         block: tickLabel(b.t, 60) + (bar >= 86400 ? "" : ` (${new Date(b.t * 1000).getMonth() + 1}/${new Date(b.t * 1000).getDate()})`),
         price: venue.fmtMid(b.c.c),
         trade: `${t("candle.hl")} ${f(b.c.h)} / ${f(b.c.l)}`,
@@ -495,6 +495,7 @@ export default function FlowChart({
     const q = e.quote;
     const quoteText = q ? `${t(q.side === "buy" ? "word.bid" : "word.ask")} ${fmtPrice(q.price, venue.priceDecimals)}` : t("chart.noQuote");
     return {
+      tw: 132,
       x,
       y: model.fy(e.mid),
       tx: flip ? x - 146 : x + 14,
@@ -674,13 +675,6 @@ export default function FlowChart({
                   <g>
                     <line className={styles.cross} x1={hv.x} x2={hv.x} y1={PAD_TOP - 12} y2={model.base + 10} />
                     <circle className={styles.crossDot} cx={hv.x} cy={hv.y} r="4.5" />
-                    <g transform={`translate(${hv.tx.toFixed(1)},${hv.ty.toFixed(1)})`}>
-                      <rect className={styles.tip} width="132" height="78" rx="10" />
-                      <text className={styles.tipBlock} x="12" y="21">{hv.block}</text>
-                      <text className={styles.tipPrice} x="12" y="41">{hv.price}</text>
-                      <text className={styles.tipSide} x="12" y="58" fill={hv.tint}>{hv.trade}</text>
-                      <text className={styles.tipMeta} x="12" y="71">{hv.lat}</text>
-                    </g>
                   </g>
                 ) : null}
               </g>
@@ -750,6 +744,18 @@ export default function FlowChart({
                   {venue.fmtMid(model.last.mid)}
                 </text>
               </g>
+              {hv ? (
+                // Last in the SVG, so the tooltip sits above the price labels, the order lines and the price tag.
+                <g style={{ transform: `translateX(${model.shift.toFixed(1)}px)` }}>
+                  <g transform={`translate(${hv.tx.toFixed(1)},${hv.ty.toFixed(1)})`}>
+                    <rect className={styles.tip} width={hv.tw} height="78" rx="10" />
+                    <text className={styles.tipBlock} x="12" y="21">{hv.block}</text>
+                    <text className={styles.tipPrice} x="12" y="41">{hv.price}</text>
+                    <text className={styles.tipSide} x="12" y="58" fill={hv.tint}>{hv.trade}</text>
+                    <text className={styles.tipMeta} x="12" y="71">{hv.lat}</text>
+                  </g>
+                </g>
+              ) : null}
             </svg>
 
             <div className={styles.fade} />
