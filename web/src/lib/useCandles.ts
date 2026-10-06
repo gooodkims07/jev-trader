@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 export interface Candle { ts: number; o: number; h: number; l: number; c: number }
 
 /** OKX bar names by length in seconds (the chart's interval buttons). */
-export const BAR_NAMES: Record<number, string> = { 60: "1m", 180: "3m", 300: "5m", 900: "15m", 1800: "30m", 3600: "1H" };
+export const BAR_NAMES: Record<number, string> = { 60: "1m", 180: "3m", 300: "5m", 600: "10m", 900: "15m", 1800: "30m", 3600: "1H" };
 
 /** Candles of `barSec` from the bot (GET /candles), oldest first, polled every 3 s while the tab is visible. */
 export function useCandles(apiUrl: string | undefined, barSec: number, enabled: boolean, limit = 300): Candle[] | null {

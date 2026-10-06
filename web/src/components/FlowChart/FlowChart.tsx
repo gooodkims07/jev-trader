@@ -18,8 +18,8 @@ const MIN_RANGE_PCT = 0.002; // floor of 0.20% of price, so bps noise stays calm
 const CELL_W = 6;
 const CELL_H = 18;
 const TAG_W = 58;
-/** OKX chart intervals: one candle each, in seconds (OKX bars 1m to 1H). */
-const BARS = [60, 180, 300, 900, 1800, 3600];
+/** OKX chart intervals: one candle each, in seconds (OKX bars 1m to 1H; 10m is made from two 5m). */
+const BARS = [60, 180, 300, 600, 900, 1800, 3600];
 const DEFAULT_BAR = 60;
 /** Px per candle (horizontal zoom: the wheel, or the buttons). */
 const GAP_MIN = 4, GAP_MAX = 28, DEFAULT_GAP = 9;

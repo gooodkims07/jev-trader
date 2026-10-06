@@ -427,8 +427,20 @@ export class OkxVenue implements Venue {
   candles(bar: string, limit: number) {
     const key = `${bar}:${limit}`, hit = this.candleCache.get(key);
     if (hit && Date.now() - hit.at < 1500) return hit.p;
-    const p = this.api.public<string[][]>("/api/v5/market/candles", { instId: this.instId, bar, limit: String(Math.min(300, Math.max(1, limit))) })
-      .then((rows) => rows.map((r) => ({ ts: Number(r[0]), o: Number(r[1]), h: Number(r[2]), l: Number(r[3]), c: Number(r[4]) })).reverse());
+    // OKX has no 10-minute bar: two 5-minute candles make one (aligned to :00, :10, :20...).
+    const merge = bar === "10m" ? 2 : 1, okxBar = bar === "10m" ? "5m" : bar;
+    const p = this.api.public<string[][]>("/api/v5/market/candles", { instId: this.instId, bar: okxBar, limit: String(Math.min(300, Math.max(1, limit * merge + merge))) })
+      .then((rows) => {
+        const list = rows.map((r) => ({ ts: Number(r[0]), o: Number(r[1]), h: Number(r[2]), l: Number(r[3]), c: Number(r[4]) })).reverse();
+        if (merge === 1) return list;
+        const out: typeof list = [], ms = 600_000;
+        for (const c of list) {
+          const t = Math.floor(c.ts / ms) * ms, last = out[out.length - 1];
+          if (last && last.ts === t) { last.h = Math.max(last.h, c.h); last.l = Math.min(last.l, c.l); last.c = c.c; }
+          else out.push({ ...c, ts: t });
+        }
+        return out.slice(-limit);
+      });
     this.candleCache.set(key, { at: Date.now(), p });
     p.catch(() => { if (this.candleCache.get(key)?.p === p) this.candleCache.delete(key); });
     return p;

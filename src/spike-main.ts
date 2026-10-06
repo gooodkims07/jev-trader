@@ -86,11 +86,11 @@ export async function runSpike(venue: Venue) {
         const after = Number(new URL(req.url).searchParams.get("after") ?? 0) || 0;
         return { status: 200, body: alerts.since(after) };
       },
-      // GET ?bar=1m|3m|5m|15m|30m|1H&limit=N: candles for the dashboard's chart (display only).
+      // GET ?bar=1m|3m|5m|10m|15m|30m|1H&limit=N: candles for the dashboard's chart (display only).
       "/candles": async (req) => {
         if (!venue.candles) return { status: 404, body: { error: "no candles here" } };
         const q = new URL(req.url).searchParams, bar = q.get("bar") ?? "1m";
-        if (!["1m", "3m", "5m", "15m", "30m", "1H"].includes(bar)) return { status: 400, body: { error: "bar: 1m, 3m, 5m, 15m, 30m or 1H" } };
+        if (!["1m", "3m", "5m", "10m", "15m", "30m", "1H"].includes(bar)) return { status: 400, body: { error: "bar: 1m, 3m, 5m, 10m, 15m, 30m or 1H" } };
         try { return { status: 200, body: await venue.candles(bar, Number(q.get("limit") ?? 200) || 200) }; } catch (e) { return { status: 502, body: { error: (e as Error).message } }; }
       },
       // GET ?levels=N: the order book for the dashboard (display only).
