@@ -20,6 +20,7 @@ import { config } from "./config";
 import type { Action, Decision } from "./model";
 import type { BlockEvent, Totals } from "./trader";
 import type { Book, Fill, MarketExec, Quote, Side, Venue, VenueInfo } from "./venue";
+import { pastRecommendations, type Recommendation } from "./regime";
 
 const round = (x: number, d: number) => Math.round(x * 10 ** d) / 10 ** d;
 
@@ -197,6 +198,8 @@ export interface SpikeSnapshot {
   band: { upper: number | null; mid: number | null; lower: number | null; resting: boolean };
   /** The squeeze shadow: the range it waits to see broken while armed (null when not armed). */
   squeeze: { armed: { high: number; low: number; until: number } | null; widthPct: number | null };
+  /** Jev's latest strategy recommendation (made with the daily brief), or null. */
+  recommendation: { date: string; ts: number; choice: string; probabilities: Record<string, number>; crowded: number | null } | null;
 }
 
 export class SpikeTrader {
@@ -295,6 +298,7 @@ export class SpikeTrader {
       excursions,
       band: (() => { const b = this.bands(); return { upper: b?.upper ?? null, mid: b?.mid ?? null, lower: b?.lower ?? null, resting: !!b?.wide }; })(),
       squeeze: { armed: this.squeezeArm, widthPct: this.bands()?.widthPct ?? null },
+      recommendation: this.lastRecommendation ? { date: this.lastRecommendation.date, ts: this.lastRecommendation.ts, choice: this.lastRecommendation.choice, probabilities: this.lastRecommendation.probabilities, crowded: this.lastRecommendation.crowded } : null,
       trend: (() => {
         const ch = this.channel(), o = this.open.get("trend");
         return { lookbackSec: config.spike.trendLookbackSec, trailPct: config.spike.trendTrailPct, high: ch?.high ?? null, low: ch?.low ?? null, minutes: this.closes.length, stop: o ? this.trailStop(o) : null };
@@ -655,6 +659,22 @@ export class SpikeTrader {
   }
 
   // ---- live execution (Jev only; the fade and follow shadows stay simulated) ----
+
+  /**
+   * Each strategy's closed trades since `sinceMs` (Jev's own, not manual ones): count, wins, average % on
+   * notional. For the daily strategy recommendation and its review.
+   */
+  strategyResults(sinceMs = 0): Record<string, { trades: number; wins: number; avgPct: number }> {
+    const out: Record<string, { trades: number; wins: number; avgPct: number }> = {};
+    for (const who of ["jev", "fade", "follow", "trend", "band", "squeeze"] as Who[]) {
+      const ts = this.tradeRows.filter((r) => r.who === who && !isManual(r) && (r.ts ?? 0) >= sinceMs);
+      out[who] = { trades: ts.length, wins: ts.filter((r) => r.pnlPct > 0).length, avgPct: ts.length ? ts.reduce((a, r) => a + r.pnlPct, 0) / ts.length : 0 };
+    }
+    return out;
+  }
+
+  /** The latest strategy recommendation (src/regime.ts), shown on the dashboard. */
+  lastRecommendation: Recommendation | null = pastRecommendations().at(-1) ?? null;
 
   /**
    * Today's P&L of manual trading (local day): manual trades closed today, and the open position if it is manual.

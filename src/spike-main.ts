@@ -6,6 +6,7 @@ import { instrumentHandler, settingsHandler, tokenOk } from "./settings";
 import type { Venue } from "./venue";
 import { Alerts } from "./alerts";
 import { buildBrief } from "./brief";
+import { marketRegime, pastRecommendations, recommend, recommendationText, reviewText, STRATEGIES } from "./regime";
 import { AccountWatch } from "./watch";
 import { OkxApi } from "./okx-api";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -220,6 +221,16 @@ export async function runSpike(venue: Venue) {
   const today = () => new Date().toLocaleDateString("sv-SE"); // YYYY-MM-DD, local
   const sendBrief = async () => {
     const b = await buildBrief(info.market, info.priceDecimals);
+    // Step 1 of strategy selection: Jev's pick for the day, and how the last pick did (a report only).
+    const prev = pastRecommendations().at(-1) ?? null;
+    const regime = await marketRegime(info.market).catch((e) => { console.warn(`market regime: ${(e as Error).message}`); return null; });
+    const rec = regime ? await recommend(info.market, regime, trader.strategyResults()) : null;
+    if (rec) {
+      trader.lastRecommendation = rec;
+      b.subject += `, 추천 ${STRATEGIES[rec.choice]?.ko ?? rec.choice}`;
+      b.body += `\n${recommendationText(rec)}\n장 성격: 7일 범위 폭 ${rec.regime.width7Pct}%, 48시간 효율 비율 ${rec.regime.efficiency48h} (0에 가까우면 출렁임, 1에 가까우면 추세), 1시간 EMA50 24시간 변화 ${rec.regime.ema50Slope24hPct}%, 15분 밴드 폭 하위 ${rec.regime.bbWidthPercentile}%.`;
+    }
+    if (prev) b.body += `\n${reviewText(prev, trader.strategyResults(prev.ts))}`;
     const a = alerts.add("brief", b.subject, b.body, "시황 리포트");
     try { writeFileSync(BRIEF_STATE, JSON.stringify({ last: today() })); } catch { /* sent anyway */ }
     console.log(`market brief sent: ${b.subject}`);

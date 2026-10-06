@@ -67,6 +67,16 @@ export default function SpikeCompare({ snap }: { snap: SpikeSnapshot | null }) {
           })()}
         </div>
       ) : null}
+      {snap?.recommendation ? (
+        <div className={styles.note}>
+          {(() => {
+            const r = snap.recommendation!, d = new Date(r.ts);
+            const name = (k: string) => t(`strat.${k}` as "strat.spike_fade");
+            const rest = Object.entries(r.probabilities).filter(([k]) => k !== r.choice).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([k, p]) => `${name(k)} ${Math.round(p * 100)}%`).join(", ");
+            return t("strat.line", { when: `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`, pick: name(r.choice), p: Math.round((r.probabilities[r.choice] ?? 0) * 100), rest });
+          })()}
+        </div>
+      ) : null}
       {snap?.band ? (
         <div className={styles.note}>
           {(() => {

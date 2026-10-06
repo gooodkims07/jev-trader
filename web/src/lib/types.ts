@@ -39,6 +39,8 @@ export interface SpikeSnapshot {
   /** The band and squeeze shadows (absent on older servers). */
   band?: { upper: number | null; mid: number | null; lower: number | null; resting: boolean };
   squeeze?: { armed: { high: number; low: number; until: number } | null; widthPct: number | null };
+  /** Jev's latest strategy recommendation (daily, with the market brief). */
+  recommendation?: { date: string; ts: number; choice: string; probabilities: Record<string, number>; crowded: number | null } | null;
   /** The trend shadow's channel and trailing stop (absent on older servers). */
   trend?: { lookbackSec: number; trailPct: number; high: number | null; low: number | null; minutes: number; stop: number | null };
 }
