@@ -72,7 +72,7 @@ export default function Page() {
             // OKX spike: the order book beside the chart.
             <div className={`${styles.chartWrap} ${styles.chartWrapControls} ${styles.chartRow}`}>
               <div className={styles.chartMain}>
-                <FlowChart events={feed.events} latest={feed.latest} levels={levels} onLevelDrag={onLevelDrag} levelNote={levelNote} />
+                <FlowChart events={feed.events} latest={feed.latest} levels={levels} onLevelDrag={onLevelDrag} levelNote={levelNote} apiUrl={API_URL} />
               </div>
               <div className={styles.bookCol}>
                 <OrderBook apiUrl={API_URL} snap={spike} trade={trade} />

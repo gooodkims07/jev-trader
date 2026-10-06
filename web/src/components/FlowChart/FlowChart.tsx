@@ -6,6 +6,7 @@ import { fmtConf, fmtMon, fmtPrice, fmtSigned, fmtSignedMon } from "@/lib/format
 import { useVenue } from "@/lib/venue";
 import { useLang } from "@/lib/i18n";
 import { smoothPath } from "./smooth";
+import { useCandles, type Candle } from "@/lib/useCandles";
 import styles from "./FlowChart.module.css";
 
 const STEP = 10; // px per block
@@ -17,11 +18,13 @@ const MIN_RANGE_PCT = 0.002; // floor of 0.20% of price, so bps noise stays calm
 const CELL_W = 6;
 const CELL_H = 18;
 const TAG_W = 58;
-/** OKX chart ranges, in seconds (blocks are seconds there). */
-const RANGES = [60, 180, 300, 600, 900, 1800, 3600];
-const DEFAULT_RANGE = 300;
+/** OKX chart intervals: one candle each, in seconds (OKX bars 1m to 1H). */
+const BARS = [60, 180, 300, 900, 1800, 3600];
+const DEFAULT_BAR = 60;
+/** Px per candle (horizontal zoom: the wheel, or the buttons). */
+const GAP_MIN = 4, GAP_MAX = 28, DEFAULT_GAP = 9;
 /** Seconds between time labels: the first at least 90 px apart. */
-const LABEL_EVERY = [5, 10, 15, 30, 60, 120, 300, 600, 900, 1800];
+const LABEL_EVERY = [5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200, 86400];
 /** RSI panel (OKX): Wilder's RSI over RSI_N candles, the candle sized so about 60 fit the range. Display only. */
 const RSI_N = 14;
 const RSI_CANDLES = [1, 5, 10, 15, 30, 60];
@@ -63,15 +66,114 @@ const LEVEL_STYLE: Record<ChartLevel["kind"], { colour: string; dash: string | u
   sl: { colour: "var(--sell-ink)", dash: "2 3" },
 };
 
+/** One candle as drawn: x of its middle, y of high, low, open and close. */
+interface Bar { key: number; t: number; x: number; yH: number; yL: number; yO: number; yC: number; up: boolean; c: Candle }
+
+/** Clock label for a candle-chart time tick: the date at midnight or for a day step, else hours and minutes. */
+function tickLabel(sec: number, every: number) {
+  const d = new Date(sec * 1000);
+  if (every >= 86400 || (d.getHours() === 0 && d.getMinutes() === 0)) return `${d.getMonth() + 1}/${d.getDate()}`;
+  return d.toLocaleTimeString("en-GB", every >= 60 ? { hour: "2-digit", minute: "2-digit", hour12: false } : { hour12: false });
+}
+
+/**
+ * The OKX candle chart's geometry: the newest candle at the right, as many as fit at `gap` px each; the forming
+ * candle follows the latest price; the price band (eased like the line chart's) covers the candles and, with
+ * "fit lines", the order and position lines; fills and the decision strip sit on the same time axis.
+ */
+function candleModel(o: {
+  candles: Candle[]; events: BlockEvent[]; lastEv: BlockEvent; bar: number; gap: number; w: number; h: number;
+  plotH: number; rsiH: number; showRsi: boolean; fitPrices: number[]; yzoom: number;
+  scaleRef: { current: { lo: number; hi: number; block: number } | null }; fmtMid: (n: number) => string;
+}) {
+  const { bar, gap, w, h, plotH, lastEv } = o;
+  const cs = o.candles.map((c) => ({ t: Math.round(c.ts / 1000), o: c.o, h: c.h, l: c.l, c: c.c }));
+  // The forming candle follows the latest price between reads (or a new one starts).
+  const now = lastEv.block, mid = lastEv.mid, lc = cs[cs.length - 1]!;
+  if (now >= lc.t && now < lc.t + bar) { lc.c = mid; lc.h = Math.max(lc.h, mid); lc.l = Math.min(lc.l, mid); }
+  else if (now >= lc.t + bar) cs.push({ t: Math.floor(now / bar) * bar, o: lc.c, h: Math.max(lc.c, mid), l: Math.min(lc.c, mid), c: mid });
+  const count = Math.max(10, Math.floor((w - ANCHOR_GAP) / gap)) + 1;
+  const vis = cs.slice(-count), first = vis[0]!, newest = vis[vis.length - 1]!;
+  const origin = first.t, pxPerBlock = gap / bar;
+  const fx = (b: number) => (b - origin) * pxPerBlock;
+  const mid0 = (c: { t: number }) => fx(c.t + bar / 2);
+
+  // Price band: candles' highs and lows, the lines with "fit lines", eased between ticks like the line chart's.
+  let lo = Math.min(...vis.map((c) => c.l)), hi = Math.max(...vis.map((c) => c.h));
+  const mean = (lo + hi) / 2;
+  const fit: number[] = [];
+  if (o.fitPrices.length) {
+    const top = Math.max(hi, ...o.fitPrices), bottom = Math.min(lo, ...o.fitPrices), r = top - bottom || mean * 0.002;
+    fit.push(bottom - r * 0.14, top + r * 0.06);
+  }
+  for (const p of fit) { if (p < lo) lo = p; if (p > hi) hi = p; }
+  const floor = Math.max(mean * MIN_RANGE_PCT, 1e-9);
+  if (hi - lo < floor) { lo = mean - floor / 2; hi = mean + floor / 2; }
+  const prev = o.scaleRef.current;
+  if (prev) {
+    if (prev.block === now) { lo = prev.lo; hi = prev.hi; } else { lo = prev.lo + (lo - prev.lo) * EASE; hi = prev.hi + (hi - prev.hi) * EASE; }
+    for (const c of vis) { if (c.l < lo) lo = c.l; if (c.h > hi) hi = c.h; }
+    for (const p of fit) { if (p < lo) lo = p; if (p > hi) hi = p; }
+    if (hi - lo < floor) { const m = (hi + lo) / 2; lo = m - floor / 2; hi = m + floor / 2; }
+  }
+  o.scaleRef.current = { lo, hi, block: now };
+  if (o.yzoom !== 1) { const m = (lo + hi) / 2, half = (hi - lo) / 2 / o.yzoom; lo = m - half; hi = m + half; }
+  const range = hi - lo || 1;
+  const fy = (p: number) => PAD_TOP + (1 - (p - lo) / range) * plotH;
+  const py = (y: number) => lo + (1 - (y - PAD_TOP) / plotH) * range;
+  const base = PAD_TOP + plotH;
+
+  const bars: Bar[] = vis.map((c) => ({ key: c.t, t: c.t, x: mid0(c), yH: fy(c.h), yL: fy(c.l), yO: fy(c.o), yC: fy(c.c), up: c.c >= c.o, c: { ts: c.t * 1000, o: c.o, h: c.h, l: c.l, c: c.c } }));
+
+  // The decision strip and the fills on the same axis: one cell per candle (its last fill, else its last tick).
+  const shownEvents = o.events.filter((e) => e.block >= first.t);
+  const byCandle = new Map<number, BlockEvent[]>();
+  for (const e of shownEvents) { const k = Math.floor(e.block / bar) * bar; (byCandle.get(k) ?? byCandle.set(k, []).get(k)!).push(e); }
+  const cellKeys = [...byCandle.keys()].sort((a, b) => a - b);
+  const cells = cellKeys.map((k, i) => {
+    const g = byCandle.get(k)!, e = g[g.length - 1]!, filled = [...g].reverse().find((x) => x.fill);
+    return { key: k, x: fx(k + bar / 2) - CELL_W / 2, fill: cellFill(filled ?? e), opacity: i === cellKeys.length - 1 ? 1 : 0.82 };
+  });
+  const beads = shownEvents.filter((e) => e.fill).map((e) => ({ key: e.block, x: fx(e.block), y: fy(e.fill!.price ?? e.mid), fill: e.fill!.side === "buy" ? "var(--buy)" : "var(--sell)" }));
+
+  const ticks = [0.25, 0.5, 0.75].map((f) => ({ y: PAD_TOP + plotH * f, label: o.fmtMid(lo + (1 - f) * range) }));
+  const every = LABEL_EVERY.find((x) => x * pxPerBlock >= 90) ?? 86400;
+  const times: { key: number; x: number; label: string }[] = [];
+  // Steps of an hour or more line up with local time (midnight, noon...), and midnight shows the date.
+  const tz = every >= 3600 ? -new Date().getTimezoneOffset() * 60 : 0;
+  for (let b = Math.ceil((first.t + tz) / every) * every - tz; b <= newest.t + bar; b += every) times.push({ key: b, x: fx(b), label: tickLabel(b, every) });
+
+  // RSI 14 on these candles' closes (all fetched, so it is warm at the left edge).
+  let rsi: { path: string; top: number; h: number; y: (v: number) => number; last: number | null; candle: number } | null = null;
+  if (o.showRsi) {
+    const vals = rsiOf(cs.map((c) => c.c));
+    const top = h - PAD_BOTTOM - o.rsiH;
+    const ry = (v: number) => top + (1 - v / 100) * o.rsiH;
+    const pts = cs.map((c, i) => ({ x: mid0(c), v: vals[i], t: c.t })).filter((p): p is { x: number; v: number; t: number } => p.v !== null && p.t >= first.t);
+    rsi = { path: pts.map((p, i) => `${i ? "L" : "M"}${p.x.toFixed(1)} ${ry(p.v).toFixed(1)}`).join(" "), top, h: o.rsiH, y: ry, last: vals[vals.length - 1] ?? null, candle: bar };
+  }
+
+  const last = { ...lastEv, mid: newest.c };
+  return {
+    bars, bodyW: Math.max(1, Math.round(gap * 0.62)),
+    rsi, line: "", area: "", cells, beads, hot: beads.length ? beads[beads.length - 1]! : null, hotCell: cells[cells.length - 1] ?? null,
+    ticks, byBlock: new Map<number, BlockEvent>(), times, fx, fy, py, last, base,
+    shift: w - ANCHOR_GAP - mid0(newest), endY: Math.min(Math.max(fy(newest.c), PAD_TOP), base), plotTop: PAD_TOP, plotH, step: gap,
+  };
+}
+
 export default function FlowChart({
   events,
   latest,
   levels = [],
   onLevelDrag,
   levelNote,
+  apiUrl,
 }: {
   events: BlockEvent[];
   latest: BlockEvent | null;
+  /** OKX: where to read candles (GET /candles); without it the chart draws the tick line. */
+  apiUrl?: string;
   levels?: ChartLevel[];
   /** shift: Shift was held at the drop (asks to widen a stop, which is otherwise refused). */
   onLevelDrag?: (level: ChartLevel, price: number, opts: { shift: boolean }) => void;
@@ -94,7 +196,12 @@ export default function FlowChart({
   // OKX only (the Kuru demo stays fixed): the time range shown (buttons, or the wheel stepping through them) and
   // a price zoom that narrows or widens the band (Shift+wheel, or the buttons). Both kept per browser.
   const zoomable = venue.name !== "kuru";
-  const [windowSec, setWindowSec] = useState(DEFAULT_RANGE);
+  // OKX: one candle per interval (bar), gap px apart; what shows is as many candles as fit the width.
+  const [bar, setBar] = useState(DEFAULT_BAR);
+  const [gap, setGap] = useState(DEFAULT_GAP);
+  const candles = useCandles(apiUrl, bar, zoomable && !!apiUrl);
+  // The tick line (while candles load, or without apiUrl) shows the same span, up to the hour of ticks kept.
+  const windowSec = Math.min(3600, Math.max(60, Math.round(((size.w || 800) - ANCHOR_GAP) / gap) * bar));
   const [yz, setYz] = useState(1);
   const [rsiOn, setRsiOn] = useState(true);
   const toggleRsi = useCallback(() => {
@@ -105,16 +212,25 @@ export default function FlowChart({
   }, []);
   useEffect(() => {
     try {
-      const r = Number(localStorage.getItem("jev.chartRange"));
-      if (RANGES.includes(r)) setWindowSec(r);
+      const b = Number(localStorage.getItem("jev.chartBar"));
+      if (BARS.includes(b)) setBar(b);
+      const g = Number(localStorage.getItem("jev.chartGap"));
+      if (g >= GAP_MIN && g <= GAP_MAX) setGap(g);
       const y = Number(localStorage.getItem("jev.chartZoomY"));
       if (y > 0) setYz(y);
       if (localStorage.getItem("jev.chartRsi") === "0") setRsiOn(false);
     } catch { /* none saved */ }
   }, []);
-  const pickRange = useCallback((r: number) => {
-    setWindowSec(r);
-    try { localStorage.setItem("jev.chartRange", String(r)); } catch { /* not kept */ }
+  const pickBar = useCallback((b: number) => {
+    setBar(b);
+    try { localStorage.setItem("jev.chartBar", String(b)); } catch { /* not kept */ }
+  }, []);
+  const zoomX = useCallback((factor: number | null) => {
+    setGap((g) => {
+      const next = factor === null ? DEFAULT_GAP : Math.min(GAP_MAX, Math.max(GAP_MIN, g * factor));
+      try { localStorage.setItem("jev.chartGap", String(next)); } catch { /* not kept */ }
+      return next;
+    });
   }, []);
   const zoomY = useCallback((factor: number | null) => {
     setYz((z) => {
@@ -127,23 +243,15 @@ export default function FlowChart({
   useEffect(() => {
     const el = panelRef.current;
     if (!el || !zoomable) return;
-    let acc = 0; // a trackpad sends many small deltas: one range step per 120
+    // The wheel zooms the time axis (wider or narrower candles: fewer or more of them); Shift+wheel the price axis.
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       if (e.shiftKey) { zoomY((e.deltaY || e.deltaX) < 0 ? 1.15 : 1 / 1.15); return; }
-      acc += e.deltaY;
-      if (Math.abs(acc) < 120) return;
-      const dir = acc > 0 ? 1 : -1; // down: longer range
-      acc = 0;
-      setWindowSec((r) => {
-        const i = Math.min(RANGES.length - 1, Math.max(0, RANGES.indexOf(r) + dir));
-        try { localStorage.setItem("jev.chartRange", String(RANGES[i])); } catch { /* not kept */ }
-        return RANGES[i];
-      });
+      zoomX(e.deltaY < 0 ? 1.1 : 1 / 1.1);
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
-  }, [zoomable, zoomY]);
+  }, [zoomable, zoomY, zoomX]);
   const yzoom = zoomable ? yz : 1;
   // "Fit lines": the price band stretches to show every order / position line (on by default, kept per browser).
   const [fitOn, setFitOn] = useState(true);
@@ -176,6 +284,12 @@ export default function FlowChart({
     const showRsi = rsiH >= 40;
     const plotH = room - (showRsi ? rsiH + 12 : 0);
     if (w < 160 || plotH < 60) return null;
+
+    // OKX with candles loaded: the candle chart. Until they load (or on Kuru), the tick line below.
+    const lastEv = latest ?? events[events.length - 1] ?? null;
+    if (zoomable && candles && candles.length >= 2 && lastEv) {
+      return candleModel({ candles, events, lastEv, bar, gap, w, h, plotH, rsiH, showRsi, fitPrices, yzoom, scaleRef, fmtMid: venue.fmtMid });
+    }
 
     // Kuru: STEP px per block, as many blocks as fit. OKX: blocks are seconds, and the chosen range fills the width.
     const n = Math.max(2, Math.ceil((w - ANCHOR_GAP) / STEP) + 2);
@@ -351,11 +465,27 @@ export default function FlowChart({
       plotTop: PAD_TOP,
       plotH,
       step,
+      bars: null as Bar[] | null,
+      bodyW: 0,
     };
-  }, [events, latest, w, h, venue, zoomable, windowSec, yzoom, rsiOn, fitPrices]);
+  }, [events, latest, w, h, venue, zoomable, windowSec, yzoom, rsiOn, fitPrices, candles, bar, gap]);
 
   const hv = useMemo(() => {
     if (!model || hover === null) return null;
+    if (model.bars) {
+      // A candle: its time, then close, high / low, open.
+      const b = model.bars.find((x) => x.t === hover);
+      if (!b) return null;
+      const flip = b.x + model.shift > w - 168, f = (n: number) => n.toFixed(venue.priceDecimals);
+      return {
+        x: b.x, y: b.yC, tx: flip ? b.x - 146 : b.x + 14, ty: Math.min(Math.max(b.yC - 92, PAD_TOP - 46), model.base - 82),
+        block: tickLabel(b.t, 60) + (bar >= 86400 ? "" : ` (${new Date(b.t * 1000).getMonth() + 1}/${new Date(b.t * 1000).getDate()})`),
+        price: venue.fmtMid(b.c.c),
+        trade: `${t("candle.hl")} ${f(b.c.h)} / ${f(b.c.l)}`,
+        tint: b.up ? "var(--buy-ink)" : "var(--sell-ink)",
+        lat: `${t("candle.open")} ${f(b.c.o)} (${b.c.c >= b.c.o ? "+" : ""}${((b.c.c / b.c.o - 1) * 100).toFixed(2)}%)`,
+      };
+    }
     const e = model.byBlock.get(hover);
     if (!e) return null;
     const x = model.fx(e.block);
@@ -375,7 +505,7 @@ export default function FlowChart({
       tint: e.fill ? (e.fill.side === "buy" ? "var(--buy-ink)" : "var(--sell-ink)") : q ? (q.side === "buy" ? "var(--buy-ink)" : "var(--sell-ink)") : "var(--muted)",
       lat: e.decision && !e.decision.late ? `${Math.round(e.decision.latencyMs)} ms` : t("chart.late"),
     };
-  }, [model, hover, w, venue, t]);
+  }, [model, hover, w, venue, t, bar]);
 
   const shown = latest ?? events[events.length - 1] ?? null;
   const d = shown?.decision ?? null;
@@ -419,7 +549,8 @@ export default function FlowChart({
           const r = ev.currentTarget.getBoundingClientRect();
           const x = ev.clientX - r.left - model.shift;
           let best: number | null = null, dist = Math.max(model.step, 4);
-          for (const b of model.byBlock.keys()) { const d = Math.abs(model.fx(b) - x); if (d <= dist) { dist = d; best = b; } }
+          if (model.bars) { for (const b of model.bars) { const d = Math.abs(b.x - x); if (d <= dist) { dist = d; best = b.t; } } }
+          else for (const b of model.byBlock.keys()) { const d = Math.abs(model.fx(b) - x); if (d <= dist) { dist = d; best = b; } }
           setHover(best);
         }}
         onPointerLeave={() => setHover(null)}
@@ -451,7 +582,7 @@ export default function FlowChart({
                     </g>
                   ))}
                   <text className={styles.rsiLabel} x={14} y={model.rsi.top - 3}>
-                    {t("rsi.label", { n: RSI_N, candle: model.rsi.candle >= 60 ? t("range.m", { n: model.rsi.candle / 60 }) : t("rsi.sec", { n: model.rsi.candle }) })}
+                    {t("rsi.label", { n: RSI_N, candle: model.rsi.candle >= 3600 ? t("range.h", { n: model.rsi.candle / 3600 }) : model.rsi.candle >= 60 ? t("range.m", { n: model.rsi.candle / 60 }) : t("rsi.sec", { n: model.rsi.candle }) })}
                     {model.rsi.last !== null ? ` ${model.rsi.last.toFixed(1)}` : ` ${t("rsi.warming")}`}
                   </text>
                 </g>
@@ -463,8 +594,20 @@ export default function FlowChart({
                   <rect x={-model.shift} y={model.plotTop - 14} width={w} height={model.plotH + 28} />
                 </clipPath>
                 <g clipPath={`url(#c${gid})`}>
-                <path d={model.area} fill={`url(#g${gid})`} />
-                <path className={styles.line} d={model.line} />
+                {model.bars ? (
+                  // Candles: a wick from high to low, a body from open to close (green up, red down).
+                  model.bars.map((b) => (
+                    <g key={b.key}>
+                      <line x1={b.x} x2={b.x} y1={b.yH} y2={b.yL} stroke={b.up ? "var(--buy)" : "var(--sell)"} strokeWidth={1} />
+                      <rect x={b.x - model.bodyW / 2} width={model.bodyW} y={Math.min(b.yO, b.yC)} height={Math.max(1, Math.abs(b.yO - b.yC))} fill={b.up ? "var(--buy)" : "var(--sell)"} rx={model.bodyW > 4 ? 1 : 0} />
+                    </g>
+                  ))
+                ) : (
+                  <>
+                    <path d={model.area} fill={`url(#g${gid})`} />
+                    <path className={styles.line} d={model.line} />
+                  </>
+                )}
                 </g>
                 {model.rsi ? <path className={styles.rsiLine} d={model.rsi.path} /> : null}
                 {model.beads.map((b) => (
@@ -499,7 +642,7 @@ export default function FlowChart({
                     />
                   </g>
                 ) : null}
-                <rect
+                {model.hotCell ? <rect
                   key={`glow${model.hotCell.key}`}
                   className={styles.cellGlow}
                   x={model.hotCell.x}
@@ -508,7 +651,7 @@ export default function FlowChart({
                   height={CELL_H}
                   rx="3"
                   fill={model.hotCell.fill}
-                />
+                /> : null}
                 {model.times.map((tm) => (
                   <text key={`t${tm.key}`} className={styles.tick} x={tm.x} y={h - 6} textAnchor="middle">
                     {tm.label}
@@ -647,17 +790,20 @@ export default function FlowChart({
       </div>
       {zoomable ? (
         <div className={styles.zoom} style={model?.rsi ? { bottom: 80 + model.rsi.h + 12 } : undefined} onPointerMove={(e) => e.stopPropagation()}>
-          {RANGES.map((r) => (
-            <button key={r} type="button" className={r === windowSec ? styles.rangeOn : styles.range} aria-pressed={r === windowSec} onClick={() => pickRange(r)}>
-              {r >= 3600 ? t("range.h", { n: r / 3600 }) : t("range.m", { n: r / 60 })}
+          {BARS.map((b) => (
+            <button key={b} type="button" className={b === bar ? styles.rangeOn : styles.range} aria-pressed={b === bar} onClick={() => pickBar(b)} title={t("bar.help")}>
+              {b >= 3600 ? t("range.h", { n: b / 3600 }) : t("range.m", { n: b / 60 })}
             </button>
           ))}
+          <span className={styles.zoomGap}>{t("zoom.x")}</span>
+          <button type="button" onClick={() => zoomX(1 / 1.25)} aria-label="zoom out time">-</button>
+          <button type="button" onClick={() => zoomX(1.25)} aria-label="zoom in time">+</button>
           <button type="button" className={`${rsiOn ? styles.rangeOn : styles.range} ${styles.zoomGapBtn}`} aria-pressed={rsiOn} onClick={toggleRsi}>RSI</button>
           <button type="button" className={`${fitOn ? styles.rangeOn : styles.range} ${styles.zoomGapBtn}`} aria-pressed={fitOn} onClick={toggleFit} title={t("zoom.fitHelp")}>{t("zoom.fit")}</button>
           <span className={styles.zoomGap}>{t("zoom.y")}</span>
           <button type="button" onClick={() => zoomY(1 / 1.25)} aria-label="zoom out price">-</button>
           <button type="button" onClick={() => zoomY(1.25)} aria-label="zoom in price">+</button>
-          {yz !== 1 ? <button type="button" className={styles.zoomReset} onClick={() => zoomY(null)}>{t("zoom.reset")}</button> : null}
+          {yz !== 1 || gap !== DEFAULT_GAP ? <button type="button" className={styles.zoomReset} onClick={() => { zoomY(null); zoomX(null); }}>{t("zoom.reset")}</button> : null}
         </div>
       ) : null}
     </div>

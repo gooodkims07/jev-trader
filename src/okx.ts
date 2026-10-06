@@ -422,6 +422,18 @@ export class OkxVenue implements Venue {
     return p;
   }
 
+  /** Chart candles, one REST read per bar per 1.5 s at most (shared by every viewer). */
+  private candleCache = new Map<string, { at: number; p: Promise<{ ts: number; o: number; h: number; l: number; c: number }[]> }>();
+  candles(bar: string, limit: number) {
+    const key = `${bar}:${limit}`, hit = this.candleCache.get(key);
+    if (hit && Date.now() - hit.at < 1500) return hit.p;
+    const p = this.api.public<string[][]>("/api/v5/market/candles", { instId: this.instId, bar, limit: String(Math.min(300, Math.max(1, limit))) })
+      .then((rows) => rows.map((r) => ({ ts: Number(r[0]), o: Number(r[1]), h: Number(r[2]), l: Number(r[3]), c: Number(r[4]) })).reverse());
+    this.candleCache.set(key, { at: Date.now(), p });
+    p.catch(() => { if (this.candleCache.get(key)?.p === p) this.candleCache.delete(key); });
+    return p;
+  }
+
   /** 1-minute closes from OKX candles (confirmed ones only), oldest first: recent, then history pages of 100. */
   async closes(minutes: number) {
     type Row = [string, string, string, string, string, string, string, string, string];

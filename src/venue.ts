@@ -241,6 +241,8 @@ export interface Venue {
    * dashboard's order book (OKX: REST, cached briefly). Display only.
    */
   depth?(levels: number): Promise<{ bids: [number, number][]; asks: [number, number][]; last: { price: number; side: Side } | null; ts: number }>;
+  /** Candles of `bar` (OKX names: 1m, 3m, 5m, 15m, 30m, 1H), oldest first, the one still forming last. For the chart. */
+  candles?(bar: string, limit: number): Promise<{ ts: number; o: number; h: number; l: number; c: number }[]>;
   /** The last `minutes` completed 1-minute closes, oldest first (OKX: from its candles). Seeds the trend shadow at start. */
   closes?(minutes: number): Promise<{ ts: number; close: number }[]>;
   /** Market facts the model sees beyond the book. OKX: the swap's current funding rate. */
