@@ -183,7 +183,8 @@ export interface SpikeSnapshot {
   plan: { live: boolean; observe: boolean; sides: "both" | "long" | "short"; maxAdds: number; allowReverse: boolean; move1mPct: number; move3mPct: number; window1Sec: number; window2Sec: number; takeProfitRoePct: number; stopLossRoePct: number; takeProfitPct: number; stopLossPct: number; leverage: number; maxHoldMin: number; size: number; base: string };
   /** The mid's move now vs 1 and 3 minutes ago, in %, or null while history fills. */
   /** Long or short only: `extreme` is the high (long only) or low (short only) the next spike is measured from, and r1Pct the move from it. */
-  gauge: { r1Pct: number | null; r3Pct: number | null; cooldownSec: number; extreme?: { kind: "high" | "low"; price: number } | null };
+  /** ref1 / ref2: the prices the two windows measure from (the mid that long ago), null while history fills. */
+  gauge: { r1Pct: number | null; r3Pct: number | null; cooldownSec: number; extreme?: { kind: "high" | "low"; price: number } | null; ref1?: number | null; ref2?: number | null };
   open: { who: Who; side: Side; entry: number; size: number; adds: number; tp: number; sl: number; heldMin: number; unrealizedPct: number; unrealizedRoePct: number; unrealizedUsd: number; mfePct: number | null; maePct: number | null; manual: boolean }[];
   /** jev: Jev's own trades only; manual: the ones taken over or closed by hand (see isManual). */
   stats: Record<Who | "manual", Stat>;
@@ -289,7 +290,7 @@ export class SpikeTrader {
       plan: { live: this.venue.live, observe: this.venue.live && !!config.spike.observe, sides: config.spike.sides === 1 ? "long" : config.spike.sides === 2 ? "short" : "both", maxAdds: config.spike.maxAdds, allowReverse: !!config.spike.allowReverse, move1mPct: config.spike.move1mPct, move3mPct: config.spike.move3mPct, window1Sec: config.spike.window1Sec, window2Sec: config.spike.window2Sec, takeProfitRoePct: config.spike.takeProfitRoePct, stopLossRoePct: config.spike.stopLossRoePct, takeProfitPct: this.tpPct, stopLossPct: this.slPct, leverage: config.okx.leverage, maxHoldMin: config.spike.maxHoldMin, size: config.tradeSize, base: this.venue.info.base },
       gauge: this.extreme && mid
         ? { r1Pct: round((mid / this.extreme.price - 1) * 100, 3), r3Pct: null, cooldownSec: Math.max(0, this.cooldownUntil - now), extreme: this.extreme }
-        : { r1Pct: r(config.spike.window1Sec), r3Pct: r(config.spike.window2Sec), cooldownSec: Math.max(0, this.cooldownUntil - now), extreme: null },
+        : { r1Pct: r(config.spike.window1Sec), r3Pct: r(config.spike.window2Sec), cooldownSec: Math.max(0, this.cooldownUntil - now), extreme: null, ref1: this.midAgo(config.spike.window1Sec), ref2: this.midAgo(config.spike.window2Sec) },
       open: [...this.open.values()].map((o) => {
         const dir = o.side === "buy" ? 1 : -1, u = mid ? dir * (mid / o.entry - 1) * 100 : 0;
         return { who: o.who, side: o.side, entry: o.entry, size: o.size, adds: o.adds, tp: o.tp, sl: o.sl, heldMin: round((now - o.openedAt) / 60, 1), unrealizedPct: round(u, 3), unrealizedRoePct: round(u * this.lev(o), 2), unrealizedUsd: round(mid ? dir * (mid - o.entry) * o.size : 0, 4), mfePct: o.mfe === undefined ? null : round(o.mfe, 3), maePct: o.mae === undefined ? null : round(o.mae, 3), manual: !!o.manual };

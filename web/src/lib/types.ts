@@ -27,7 +27,8 @@ export interface SpikeStat { trades: number; wins: number; avgPct: number; total
 export interface SpikeSnapshot {
   /** live: real orders; observe: live but sending no new orders (absent on older servers). */
   plan: { live?: boolean; observe?: boolean; sides?: "both" | "long" | "short"; move1mPct: number; move3mPct: number; window1Sec?: number; window2Sec?: number; takeProfitRoePct: number; stopLossRoePct: number; takeProfitPct: number; stopLossPct: number; leverage: number; maxHoldMin: number; size: number; base: string };
-  gauge: { r1Pct: number | null; r3Pct: number | null; cooldownSec: number; extreme?: { kind: "high" | "low"; price: number } | null };
+  /** ref1 / ref2: the prices the two windows measure from; extreme: the high or low (long or short only). */
+  gauge: { r1Pct: number | null; r3Pct: number | null; cooldownSec: number; extreme?: { kind: "high" | "low"; price: number } | null; ref1?: number | null; ref2?: number | null };
   open: { who: Who; side: Side; entry: number; size?: number; adds?: number; tp: number; sl: number; heldMin: number; unrealizedPct: number; unrealizedRoePct: number; unrealizedUsd?: number; mfePct?: number | null; maePct?: number | null; manual?: boolean }[];
   /** jev: Jev's own trades; manual: taken over from the OKX app or closed by hand (absent on older servers). */
   /** trend is absent on servers from before the trend shadow. */

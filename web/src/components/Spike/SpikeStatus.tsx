@@ -225,13 +225,19 @@ export default function SpikeStatus({ snap, apiUrl }: { snap: SpikeSnapshot | nu
         )}
       </section>
       <section className={styles.section}>
-        <div className={styles.label}>
-          <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            {t("spike.distance")}
-            <button type="button" className={styles.miniButton} onClick={reset}>{t("spike.reset")}</button>
+        <div className={`${styles.label} ${styles.distanceHead}`}>
+          <span className={styles.distanceRow}>
+            <span className={styles.nowrap}>{t("spike.distance")}</span>
+            {/* The prices the moves are measured from: the high / low (one side only), else the price each window ago. */}
+            {snap?.gauge.extreme ? (
+              <span className={styles.refPrice}>{t("spike.refExtreme", { kind: t(snap.gauge.extreme.kind === "high" ? "spike.fromHighShort" : "spike.fromLowShort"), px: venue.fmtMid(snap.gauge.extreme.price) })}</span>
+            ) : snap && plan && (snap.gauge.ref1 != null || snap.gauge.ref2 != null) ? (
+              <span className={styles.refPrice}>{t("spike.refPrices", { w1: span(t, plan.window1Sec ?? 60), p1: snap.gauge.ref1 != null ? venue.fmtMid(snap.gauge.ref1) : "-", w2: span(t, plan.window2Sec ?? 180), p2: snap.gauge.ref2 != null ? venue.fmtMid(snap.gauge.ref2) : "-" })}</span>
+            ) : null}
+            <button type="button" className={`${styles.miniButton} ${styles.nowrap}`} onClick={reset}>{t("spike.reset")}</button>
             {resetMsg ? <span className={styles.labelNote}>{resetMsg}</span> : null}
           </span>
-          <span className={styles.labelNote}>
+          <span className={`${styles.labelNote} ${styles.triggerNote}`}>
             {snap && snap.gauge.cooldownSec > 0 ? t("spike.cooldown", { n: snap.gauge.cooldownSec }) : snap?.gauge.extreme && plan ? t("spike.extremeTrigger", { kind: t(snap.gauge.extreme.kind === "high" ? "spike.fromHigh" : "spike.fromLow"), px: venue.fmtMid(snap.gauge.extreme.price), a: plan.move1mPct }) : plan ? t("spike.trigger", { a: plan.move1mPct, b: plan.move3mPct, w1: span(t, plan.window1Sec ?? 60), w2: span(t, plan.window2Sec ?? 180) }) : ""}
           </span>
         </div>

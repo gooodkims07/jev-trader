@@ -491,3 +491,36 @@
   opacity: 0.5;
   cursor: default;
 }
+
+/* the reference prices before the reset button */
+.refPrice {
+  white-space: nowrap;
+  font: 500 11px var(--font-mono), monospace;
+  letter-spacing: 0;
+  color: var(--ink-2);
+  background: var(--track);
+  border-radius: 6px;
+  padding: 1px 6px;
+}
+
+/* "distance to a spike": title, reference prices and the reset button on one line (wrapping whole items), the trigger under it */
+.distanceHead {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.distanceRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.triggerNote {
+  align-self: flex-end;
+}
