@@ -26,6 +26,16 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* the dashboard build: commit and build time */
+.build {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-weight: 400;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--muted-2);
+  white-space: nowrap;
+}
+
 .spacer {
   flex: 1;
 }

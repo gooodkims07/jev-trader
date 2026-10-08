@@ -59,6 +59,13 @@ export default function Header({ meta, latest, connection, onSettings }: HeaderP
     <div className={styles.header}>
       <span className={styles.brand}>‖ Jev Trader</span>
 
+      {venue.name !== "kuru" ? (
+        // Which dashboard build this is: the commit and when it was built (KST). Not on the Kuru demo page.
+        <span className={styles.build} title={`${t("header.build")} ${process.env.BUILD_SHA} ${process.env.BUILD_TIME} KST`}>
+          {t("header.build")} {process.env.BUILD_SHA} ({process.env.BUILD_TIME})
+        </span>
+      ) : null}
+
       <span className={styles.block}>{t(venue.clock === "block" ? "clock.block" : "clock.tick")} {latest ? fmtInt(latest.block) : "-"}</span>
 
       <span className={styles.spacer} />

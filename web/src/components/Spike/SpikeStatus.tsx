@@ -233,6 +233,9 @@ export default function SpikeStatus({ snap, apiUrl }: { snap: SpikeSnapshot | nu
               <span className={styles.refPrice}>{t("spike.refExtreme", { kind: t(snap.gauge.extreme.kind === "high" ? "spike.fromHighShort" : "spike.fromLowShort"), px: venue.fmtMid(snap.gauge.extreme.price) })}</span>
             ) : snap && plan && (snap.gauge.ref1 != null || snap.gauge.ref2 != null) ? (
               <span className={styles.refPrice}>{t("spike.refPrices", { w1: span(t, plan.window1Sec ?? 60), p1: snap.gauge.ref1 != null ? venue.fmtMid(snap.gauge.ref1) : "-", w2: span(t, plan.window2Sec ?? 180), p2: snap.gauge.ref2 != null ? venue.fmtMid(snap.gauge.ref2) : "-" })}</span>
+            ) : snap && plan ? (
+              // Just started (or just reset): no price that long ago yet. Say so instead of leaving a gap.
+              <span className={styles.refPrice}>{t("spike.refWarming", { w1: span(t, plan.window1Sec ?? 60) })}</span>
             ) : null}
             <button type="button" className={`${styles.miniButton} ${styles.nowrap}`} onClick={reset}>{t("spike.reset")}</button>
             {resetMsg ? <span className={styles.labelNote}>{resetMsg}</span> : null}
